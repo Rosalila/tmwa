@@ -24,6 +24,8 @@
 
 #include <algorithm>
 
+#include <fstream>
+
 #include "../compat/nullpo.hpp"
 #include "../compat/fun.hpp"
 
@@ -37,25 +39,22 @@
 #include "../generic/random.hpp"
 
 #include "../io/cxxstdio.hpp"
-#include "../io/extract.hpp"
+#include "../io/cxxstdio_enums.hpp"
 #include "../io/read.hpp"
 #include "../io/write.hpp"
 
 #include "../net/socket.hpp"
 #include "../net/timer.hpp"
-#include "../net/timestamp-utils.hpp"
 
 #include "../mmo/config_parse.hpp"
-#include "../mmo/cxxstdio_enums.hpp"
+#include "../mmo/core.hpp"
+#include "../mmo/extract.hpp"
 #include "../mmo/extract_enums.hpp"
 #include "../mmo/human_time_diff.hpp"
 #include "../mmo/ids.hpp"
+#include "../mmo/mmo.hpp"
+#include "../mmo/utils.hpp"
 #include "../mmo/version.hpp"
-
-#include "../high/core.hpp"
-#include "../high/extract_mmo.hpp"
-#include "../high/mmo.hpp"
-#include "../high/utils.hpp"
 
 #include "battle.hpp"
 #include "chrif.hpp"
@@ -73,8 +72,7 @@
 #include "tmw.hpp"
 #include "trade.hpp"
 
-#include "../poison.hpp"
-
+//#include "../poison.hpp"
 
 namespace tmwa
 {
@@ -404,6 +402,316 @@ void atc_do_help(Session *s, ZString cmd, const AtCommandInfo& info)
     if (level >= 100)
         ++ll;
     clif_displaymessage(s, msg.xslice_t((ll - 1) * 3));
+}
+
+void readIntFromFile(char* file_path, int* output)
+{
+    std::ifstream in(file_path);
+    if(!in.is_open())
+    {
+        *output=0;
+        return;
+    }
+    in>>*output;
+    in.close();
+}
+
+void readStringFromFile(char* file_path, char* output)
+{
+    std::ifstream address_file(file_path);
+    address_file>>output;
+}
+
+void writeIntToFile(char* file_path, int number)
+{
+    std::ofstream out(file_path);
+    out<<number;
+    out.close();
+}
+
+void writeStringToFile(char* file_path, char* str)
+{
+    std::ofstream out(file_path);
+    out<<str;
+    out.close();
+}
+
+static
+ATCE atcommand_doge(Session *s, dumb_ptr<map_session_data> sd,
+        ZString message)
+{
+    if (!message || message.startswith("help"_s))
+    {
+        clif_displaymessage(s, "Commands:"_s);
+        clif_displaymessage(s, "@doge help"_s);
+        clif_displaymessage(s, "@doge balance"_s);
+        clif_displaymessage(s, "@doge deposit"_s);
+        clif_displaymessage(s, "@doge withdraw <address> <amount>"_s);
+        clif_displaymessage(s, "@doge tip <character name> <amount>"_s);
+        return ATCE::OKAY;
+    }
+
+    if (message.startswith("getgold"_s))
+    {
+        pc_getzeny(sd,100);
+    }
+
+    if (message.startswith("balance"_s))
+    {
+        char doge_command_rm[255];
+        strcpy(doge_command_rm,"rm doge/");
+        strcat(doge_command_rm,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command_rm,"_deposits");
+        system(doge_command_rm);
+
+        char doge_command[255];
+        strcpy(doge_command,"./dogecoind getreceivedbyaccount tmwplayer_");
+        strcat(doge_command,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command," >> doge/");
+        strcat(doge_command,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command,"_deposits");
+        system(doge_command);
+
+	char file_path[255];
+	strcpy(file_path,"doge/");
+        strcat(file_path,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(file_path,"_balance");
+
+        int balance;
+        readIntFromFile(file_path,&balance);
+
+	char file_path_deposits[255];
+	strcpy(file_path_deposits,"doge/");
+        strcat(file_path_deposits,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(file_path_deposits,"_deposits");
+
+        int deposits;
+        readIntFromFile(file_path_deposits,&deposits);
+        
+        clif_displaymessage(s,STRPRINTF("balance: %d"_fmt,(balance+deposits)));
+
+        return ATCE::OKAY;
+    }
+
+    if (message.startswith("deposit"_s))
+    {
+        char doge_command_rm[255];
+        strcpy(doge_command_rm,"rm doge/");
+        strcat(doge_command_rm,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command_rm,"_address");
+        system(doge_command_rm);
+
+        char doge_command[255];
+        strcpy(doge_command,"./dogecoind getaccountaddress tmwplayer_");
+        strcat(doge_command,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command," >> doge/");
+        strcat(doge_command,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command,"_address");
+        system(doge_command);
+
+
+	char file_path[255];
+	strcpy(file_path,"doge/");
+        strcat(file_path,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(file_path,"_address");
+
+        char doge_address[40];
+        readStringFromFile(file_path,doge_address);
+
+        clif_displaymessage(s,STRPRINTF("deposit address: %s"_fmt,doge_address));
+
+        return ATCE::OKAY;
+    }
+
+    if (message.startswith("withdraw"_s))
+    {
+        XString command;
+        ZString params;
+
+        XString address;
+        ZString amount;
+
+        if (!asplit(message, &command, &params))
+        {
+            clif_displaymessage(s, "Such error"_s);
+            return ATCE::OKAY;
+        }
+
+        if (asplit(params, &address, &amount))
+        {
+            if(address == ""_s || amount == ""_s)
+            {
+                clif_displaymessage(s, "usage: @doge withdraw <address> <amount>"_s);
+                return ATCE::OKAY;
+            }
+        }
+        else
+        {
+            clif_displaymessage(s, "Such error"_s);
+            return ATCE::OKAY;
+        }
+
+        if(atoi(amount.c_str())<=0)
+        {
+            clif_displaymessage(s, "naughty shibe"_s);
+            return ATCE::OKAY;
+        }
+
+        //Deposits
+        char doge_command_rm[255];
+        strcpy(doge_command_rm,"rm doge/");
+        strcat(doge_command_rm,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command_rm,"_deposits");
+        system(doge_command_rm);
+
+        char doge_command[255];
+        strcpy(doge_command,"./dogecoind getreceivedbyaccount tmwplayer_");
+        strcat(doge_command,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command," >> doge/");
+        strcat(doge_command,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command,"_deposits");
+        system(doge_command);
+
+        char file_path_deposits[255];
+        strcpy(file_path_deposits,"doge/");
+        strcat(file_path_deposits,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(file_path_deposits,"_deposits");
+
+        int deposits;
+        readIntFromFile(file_path_deposits,&deposits);
+
+        //Balance
+	char file_path[255];
+	strcpy(file_path,"doge/");
+        strcat(file_path,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(file_path,"_balance");
+
+        int balance;
+        readIntFromFile(file_path,&balance);
+
+        int total = deposits + balance;
+        total-=(atoi(amount.c_str())+1);//-1 for tax fee
+
+        if(total<0)
+        {
+            clif_displaymessage(s, "You have not enough doges"_s);
+            return ATCE::OKAY;
+        }
+
+        char doge_command_send[255];
+        strcpy(doge_command_send,"./dogecoind sendtoaddress ");
+        strcat(doge_command_send, ((AString)address).c_str());
+        strcat(doge_command_send, " ");
+        strcat(doge_command_send, amount.c_str());
+        system(doge_command_send);
+
+        writeIntToFile(file_path, balance-atoi(amount.c_str())-1);
+
+        clif_displaymessage(s,STRPRINTF("Sent %s doges"_fmt,amount));
+
+        return ATCE::OKAY;
+    }
+
+    if (message.startswith("tip"_s))
+    {
+        XString command;
+        ZString params;
+
+        XString character;
+        ZString amount;
+
+        if (!asplit(message, &command, &params))
+        {
+            clif_displaymessage(s, "Such error"_s);
+            return ATCE::OKAY;
+        }
+
+        if (asplit(params, &character, &amount))
+        {
+            if(character == ""_s || amount == ""_s)
+            {
+                clif_displaymessage(s, "usage: @doge tip <character name> <amount>"_s);
+                return ATCE::OKAY;
+            }
+        }
+        else
+        {
+            clif_displaymessage(s, "Such error"_s);
+        }
+
+        if(atoi(amount.c_str())<0)
+        {
+            clif_displaymessage(s, "naughty shibe"_s);
+            return ATCE::OKAY;
+        }
+
+        //Sender
+
+        //Deposits
+        char doge_command_rm[255];
+        strcpy(doge_command_rm,"rm doge/");
+        strcat(doge_command_rm,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command_rm,"_deposits");
+        system(doge_command_rm);
+
+        char doge_command[255];
+        strcpy(doge_command,"./dogecoind getreceivedbyaccount tmwplayer_");
+        strcat(doge_command,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command," >> doge/");
+        strcat(doge_command,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(doge_command,"_deposits");
+        system(doge_command);
+
+        char file_path_deposits[255];
+        strcpy(file_path_deposits,"doge/");
+        strcat(file_path_deposits,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(file_path_deposits,"_deposits");
+
+        int deposits;
+        readIntFromFile(file_path_deposits,&deposits);
+
+        //Balance
+	char file_path[255];
+	strcpy(file_path,"doge/");
+        strcat(file_path,map_charid2nick(sd->char_id_).to__lower().c_str());
+        strcat(file_path,"_balance");
+
+        int balance;
+        readIntFromFile(file_path,&balance);
+
+        int total = balance + deposits;
+        total-=atoi(amount.c_str());
+
+        if(total<0)
+        {
+            clif_displaymessage(s, "You have not enough doges"_s);
+            return ATCE::OKAY;
+        }
+
+        writeIntToFile(file_path, balance-atoi(amount.c_str()) );
+
+        //Receiver
+	char file_path_receiver[255];
+	strcpy(file_path_receiver,"doge/");
+        strcat(file_path_receiver,((AString)character).c_str());
+        strcat(file_path_receiver,"_balance");
+
+        int balance_receiver;
+        readIntFromFile(file_path_receiver,&balance_receiver);
+
+        balance_receiver+=atoi(amount.c_str());
+
+        writeIntToFile(file_path_receiver, balance_receiver);
+
+        //Output
+        clif_displaymessage(s,STRPRINTF("Sent %s doges"_fmt,amount));
+
+        return ATCE::OKAY;
+    }
+
+
+
+    return ATCE::OKAY;
 }
 
 static
@@ -4913,6 +5221,9 @@ ATCE atcommand_source(Session *s, dumb_ptr<map_session_data>,
 // declared extern above
 Map<XString, AtCommandInfo> atcommand_info =
 {
+    {"doge"_s, {"<command>"_s,
+        0, atcommand_doge,
+        "Such Dogecoin transaccions."_s}},
     {"help"_s, {"[level[-level]|category|@command]"_s,
         0, atcommand_help,
         "Show help"_s}},
