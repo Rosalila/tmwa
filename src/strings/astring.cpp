@@ -30,6 +30,8 @@
 #include "zstring.hpp"
 #include "xstring.hpp"
 #include "literal.hpp"
+#include <iostream>
+using namespace std;
 
 // doing sneaky tricks here
 //#include "../poison.hpp"
@@ -141,9 +143,13 @@ namespace strings
     AString::iterator AString::begin() const
     {
         if (special == 255)
+        {
             return &*r_ptr()->begin();
+        }
         else
+        {
             return data + 0;
+        }
     }
     AString::iterator AString::end() const
     {

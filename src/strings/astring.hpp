@@ -36,11 +36,13 @@ namespace strings
         __attribute__((unused))
 #endif
         RString align[0];
-        char data[255];
         unsigned char special;
         RString *r_ptr() { return reinterpret_cast<RString *>(data); }
         const RString *r_ptr() const { return reinterpret_cast<const RString *>(data); }
     public:
+	//Sorry made public by Turupawn
+        char data[255];
+
         AString();
         AString(const AString&);
         AString(AString&&);

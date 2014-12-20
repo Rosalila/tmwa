@@ -1,0 +1,206 @@
+map/atcommand.cpp:                if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
+map/atcommand.cpp:                    clif_displaymessage(pl_sd->sess, "Warped."_s);
+map/atcommand.cpp:           || bool(pl_sd->status.option & Opt0::HIDE))
+map/atcommand.cpp:                pl_sd->status_key.name,
+map/atcommand.cpp:                pl_sd->mapname_, pl_sd->bl_x, pl_sd->bl_y);
+map/atcommand.cpp:        if (pl_sd->bl_m->flag.get(MapFlag::NOWARPTO)
+map/atcommand.cpp:        pc_setpos(sd, pl_sd->mapname_, pl_sd->bl_x, pl_sd->bl_y, BeingRemoveWhy::WARPED);
+map/atcommand.cpp:        if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                  || bool(pl_sd->status.option & Opt0::HIDE))
+map/atcommand.cpp:                VString<23> player_name = pl_sd->status_key.name.to__lower();
+map/atcommand.cpp:                                pl_sd->status_key.name, pl_gm_level,
+map/atcommand.cpp:                                pl_sd->mapname_, pl_sd->bl_x, pl_sd->bl_y);
+map/atcommand.cpp:                                pl_sd->status_key.name, pl_sd->mapname_,
+map/atcommand.cpp:                                pl_sd->bl_x, pl_sd->bl_y);
+map/atcommand.cpp:        if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                  || bool(pl_sd->status.option & Opt0::HIDE))
+map/atcommand.cpp:                VString<23> player_name = pl_sd->status_key.name.to__lower();
+map/atcommand.cpp:                    Option<PartyPair> p_ = party_search(pl_sd->status.party_id);
+map/atcommand.cpp:                                pl_sd->status_key.name, pl_gm_level, temp0);
+map/atcommand.cpp:        if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                  || bool(pl_sd->status.option & Opt0::HIDE))
+map/atcommand.cpp:                if (pl_sd->bl_m == map_id)
+map/atcommand.cpp:                                pl_sd->status_key.name, pl_gm_level,
+map/atcommand.cpp:                                pl_sd->mapname_, pl_sd->bl_x, pl_sd->bl_y);
+map/atcommand.cpp:                                pl_sd->status_key.name, pl_sd->mapname_,
+map/atcommand.cpp:                                pl_sd->bl_x, pl_sd->bl_y);
+map/atcommand.cpp:        if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                  || bool(pl_sd->status.option & Opt0::HIDE))
+map/atcommand.cpp:                if (pl_sd->bl_m == map_id)
+map/atcommand.cpp:                    Option<PartyPair> p_ = party_search(pl_sd->status.party_id);
+map/atcommand.cpp:                                pl_sd->status_key.name, pl_gm_level, temp0);
+map/atcommand.cpp:                                pl_sd->status_key.name, temp0);
+map/atcommand.cpp:        if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                      || bool(pl_sd->status.option & Opt0::HIDE))
+map/atcommand.cpp:                    VString<23> player_name = pl_sd->status_key.name.to__lower();
+map/atcommand.cpp:                                pl_sd->status_key.name, pl_gm_level,
+map/atcommand.cpp:                                pl_sd->mapname_, pl_sd->bl_x, pl_sd->bl_y);
+map/atcommand.cpp:                                pl_sd->status.base_level,
+map/atcommand.cpp:                                pl_sd->status.job_level);
+map/atcommand.cpp:                        Option<PartyPair> p_ = party_search(pl_sd->status.party_id);
+map/atcommand.cpp:            pc_damage(nullptr, pl_sd, pl_sd->status.hp + 1);
+map/atcommand.cpp:            if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                if (sd->bl_m == pl_sd->bl_m)
+map/atcommand.cpp:                    pl_sd->pvp_timer.cancel();
+map/atcommand.cpp:            if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                if (sd->bl_m == pl_sd->bl_m && !pl_sd->pvp_timer)
+map/atcommand.cpp:                    pl_sd->pvp_timer = Timer(gettick() + 200_ms,
+map/atcommand.cpp:                            std::bind(pc_calc_pvprank_timer, ph::_1, ph::_2, pl_sd->bl_id));
+map/atcommand.cpp:                    pl_sd->pvp_rank = 0;
+map/atcommand.cpp:                    pl_sd->pvp_point = 5;
+map/atcommand.cpp:            if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
+map/atcommand.cpp:        pl_sd->status.hp = pl_sd->status.max_hp;
+map/atcommand.cpp:        output = STRPRINTF("'%s' stats:"_fmt, pl_sd->status_key.name);
+map/atcommand.cpp:        output = STRPRINTF("Base Level - %d"_fmt, pl_sd->status.base_level);
+map/atcommand.cpp:        output = STRPRINTF("Job - Novice/Human (level %d)"_fmt, pl_sd->status.job_level);
+map/atcommand.cpp:        output = STRPRINTF("Hp - %d"_fmt, pl_sd->status.hp);
+map/atcommand.cpp:        output = STRPRINTF("MaxHp - %d"_fmt, pl_sd->status.max_hp);
+map/atcommand.cpp:        output = STRPRINTF("Sp - %d"_fmt, pl_sd->status.sp);
+map/atcommand.cpp:        output = STRPRINTF("MaxSp - %d"_fmt, pl_sd->status.max_sp);
+map/atcommand.cpp:        output = STRPRINTF("Str - %3d"_fmt, pl_sd->status.attrs[ATTR::STR]);
+map/atcommand.cpp:        output = STRPRINTF("Agi - %3d"_fmt, pl_sd->status.attrs[ATTR::AGI]);
+map/atcommand.cpp:        output = STRPRINTF("Vit - %3d"_fmt, pl_sd->status.attrs[ATTR::VIT]);
+map/atcommand.cpp:        output = STRPRINTF("Int - %3d"_fmt, pl_sd->status.attrs[ATTR::INT]);
+map/atcommand.cpp:        output = STRPRINTF("Dex - %3d"_fmt, pl_sd->status.attrs[ATTR::DEX]);
+map/atcommand.cpp:        output = STRPRINTF("Luk - %3d"_fmt, pl_sd->status.attrs[ATTR::LUK]);
+map/atcommand.cpp:        output = STRPRINTF("Zeny - %d"_fmt, pl_sd->status.zeny);
+map/atcommand.cpp:        if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                    pl_sd->status_key.name, pl_sd->status.base_level,
+map/atcommand.cpp:                    pl_sd->status.job_level,
+map/atcommand.cpp:                    pl_sd->status.hp, pl_sd->status.max_hp,
+map/atcommand.cpp:                    pl_sd->status.sp, pl_sd->status.max_sp);
+map/atcommand.cpp:                    pl_sd->status.attrs[ATTR::STR],
+map/atcommand.cpp:                    pl_sd->status.attrs[ATTR::AGI],
+map/atcommand.cpp:                    pl_sd->status.attrs[ATTR::VIT],
+map/atcommand.cpp:                    pl_sd->status.attrs[ATTR::INT],
+map/atcommand.cpp:                    pl_sd->status.attrs[ATTR::DEX],
+map/atcommand.cpp:                    pl_sd->status.attrs[ATTR::LUK],
+map/atcommand.cpp:                    pl_sd->status.zeny,
+map/atcommand.cpp:            pl_sd->opt1 = opt1;
+map/atcommand.cpp:            pl_sd->opt2 = opt2;
+map/atcommand.cpp:            pl_sd->status.option = opt3;
+map/atcommand.cpp:            && pl_sd->state.auth && s2 != s
+map/atcommand.cpp:            pc_damage(nullptr, pl_sd, pl_sd->status.hp + 1);
+map/atcommand.cpp:            clif_displaymessage(pl_sd->sess, "The holy messenger has given judgement."_s);
+map/atcommand.cpp:            && pl_sd->state.auth && s2 != s && sd->bl_m == pl_sd->bl_m
+map/atcommand.cpp:            pc_damage(nullptr, pl_sd, pl_sd->status.hp + 1);
+map/atcommand.cpp:            clif_displaymessage(pl_sd->sess, "The holy messenger has given judgement."_s);
+map/atcommand.cpp:            && pl_sd->state.auth && sd->bl_m == pl_sd->bl_m)
+map/atcommand.cpp:                if (pl_sd->status.base_level == battle_config.maximum_level)
+map/atcommand.cpp:                if (level > battle_config.maximum_level || level > (battle_config.maximum_level - pl_sd->status.base_level))
+map/atcommand.cpp:                        pl_sd->status.base_level;
+map/atcommand.cpp:                    pl_sd->status.status_point +=
+map/atcommand.cpp:                        (pl_sd->status.base_level + i + 14) / 4;
+map/atcommand.cpp:                pl_sd->status.base_level += level;
+map/atcommand.cpp:                pc_heal(pl_sd, pl_sd->status.max_hp, pl_sd->status.max_sp);
+map/atcommand.cpp:                if (pl_sd->status.base_level == 1)
+map/atcommand.cpp:                if (level < -battle_config.maximum_level || level < (1 - pl_sd->status.base_level))
+map/atcommand.cpp:                    level = 1 - pl_sd->status.base_level;
+map/atcommand.cpp:                if (pl_sd->status.status_point > 0)
+map/atcommand.cpp:                        pl_sd->status.status_point -=
+map/atcommand.cpp:                            (pl_sd->status.base_level + i + 14) / 4;
+map/atcommand.cpp:                    if (pl_sd->status.status_point < 0)
+map/atcommand.cpp:                        pl_sd->status.status_point = 0;
+map/atcommand.cpp:                pl_sd->status.base_level += level;
+map/atcommand.cpp:                pl_sd->status.base_exp = 0;
+map/atcommand.cpp:                if (pl_sd->status.job_level == max_level)
+map/atcommand.cpp:                if (pl_sd->status.job_level + level > max_level)
+map/atcommand.cpp:                    level = max_level - pl_sd->status.job_level;
+map/atcommand.cpp:                pl_sd->status.job_level += level;
+map/atcommand.cpp:                pl_sd->status.skill_point += level;
+map/atcommand.cpp:                if (pl_sd->status.job_level == 1)
+map/atcommand.cpp:                if (pl_sd->status.job_level + level < 1)
+map/atcommand.cpp:                    level = 1 - pl_sd->status.job_level;
+map/atcommand.cpp:                pl_sd->status.job_level += level;
+map/atcommand.cpp:                if (pl_sd->status.skill_point > 0)
+map/atcommand.cpp:                    pl_sd->status.skill_point += level;
+map/atcommand.cpp:                    if (pl_sd->status.skill_point < 0)
+map/atcommand.cpp:                        pl_sd->status.skill_point = 0;
+map/atcommand.cpp:            && pl_sd->state.auth && pc_isGM(sd).overwhelms(pc_isGM(pl_sd)))
+map/atcommand.cpp:            if (sd->status_key.account_id != pl_sd->status_key.account_id)
+map/atcommand.cpp:                    pl_sd->status.skill[skill_id].lv = 0;
+map/atcommand.cpp:                    pl_sd->status.skill[skill_id].flags = SkillFlags::ZERO;
+map/atcommand.cpp:        if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:            if (sd->status_key.account_id != pl_sd->status_key.account_id)
+map/atcommand.cpp:            pl_sd->status.base_level = 1;
+map/atcommand.cpp:            pl_sd->status.base_exp = 0;
+map/atcommand.cpp:            pl_sd->status.job_level = 1;
+map/atcommand.cpp:            pl_sd->status.job_exp = 0;
+map/atcommand.cpp:            pl_sd->status.zeny = 50;
+map/atcommand.cpp:        new_skill_point = pl_sd->status.skill_point + point;
+map/atcommand.cpp:        if (new_skill_point != pl_sd->status.skill_point)
+map/atcommand.cpp:            pl_sd->status.skill_point = new_skill_point;
+map/atcommand.cpp:        new_status_point = pl_sd->status.status_point + point;
+map/atcommand.cpp:        if (new_status_point != pl_sd->status.status_point)
+map/atcommand.cpp:            pl_sd->status.status_point = new_status_point;
+map/atcommand.cpp:        new_zeny = pl_sd->status.zeny + zeny;
+map/atcommand.cpp:        if (new_zeny != pl_sd->status.zeny)
+map/atcommand.cpp:            pl_sd->status.zeny = new_zeny;
+map/atcommand.cpp:            && pl_sd->state.auth
+map/atcommand.cpp:            && sd->status_key.account_id != pl_sd->status_key.account_id
+map/atcommand.cpp:            if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
+map/atcommand.cpp:            if (pl_sd && pl_sd->state.auth
+map/atcommand.cpp:                && sd->status_key.account_id != pl_sd->status_key.account_id
+map/atcommand.cpp:                && pl_sd->status.party_id == p.party_id)
+map/atcommand.cpp:                if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
+map/atcommand.cpp:                if (pl_sd && pl_sd->state.auth
+map/atcommand.cpp:                    && pl_sd->mapname_ == map_name)
+map/atcommand.cpp:                            pl_sd->status_key.name, s2, pl_sd->bl_x, pl_sd->bl_y);
+map/atcommand.cpp:                    clif_displaymessage(pl_sd->sess, output);
+map/atcommand.cpp:            if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:                clif_displaymessage(pl_sd->sess, "Your Effect Has Changed."_s);
+map/atcommand.cpp:                if (!pl_sd->status.inventory[i].nameid)
+map/atcommand.cpp:                P<struct item_data> item_data = TRY_UNWRAP(itemdb_exists(pl_sd->status.inventory[i].nameid), continue);
+map/atcommand.cpp:                    counter = counter + pl_sd->status.inventory[i].amount;
+map/atcommand.cpp:                                pl_sd->status_key.name);
+map/atcommand.cpp:                    EPOS equip = pl_sd->status.inventory[i].equip;
+map/atcommand.cpp:                                pl_sd->status.inventory[i].amount,
+map/atcommand.cpp:                                pl_sd->status.inventory[i].nameid,
+map/atcommand.cpp:            Option<P<Storage>> stor_ = account2storage2(pl_sd->status_key.account_id);
+map/atcommand.cpp:                                    pl_sd->status_key.name);
+map/atcommand.cpp:    pl_sd->special_state.killer = !pl_sd->special_state.killer;
+map/atcommand.cpp:    if (pl_sd->special_state.killer)
+map/atcommand.cpp:        clif_displaymessage(pl_sd->sess, "You are now a killer"_s);
+map/atcommand.cpp:        clif_displaymessage(pl_sd->sess, "You are no longer a killer"_s);
+map/atcommand.cpp:    pl_sd->special_state.killable = !pl_sd->special_state.killable;
+map/atcommand.cpp:    if (pl_sd->special_state.killable)
+map/atcommand.cpp:        if (pl_sd->status.inventory[i].amount)
+map/atcommand.cpp:            if (bool(pl_sd->status.inventory[i].equip))
+map/atcommand.cpp:            pc_dropitem(pl_sd, i, pl_sd->status.inventory[i].amount);
+map/atcommand.cpp:    clif_displaymessage(pl_sd->sess, "Ever play 52 card pickup?"_s);
+map/atcommand.cpp:        if (pl_sd->status.inventory[i].amount)
+map/atcommand.cpp:            if (bool(pl_sd->status.inventory[i].equip))
+map/atcommand.cpp:    clif_displaymessage(pl_sd->sess,
+map/atcommand.cpp:    clif_displaymessage(pl_sd->sess,
+map/atcommand.cpp:    clif_displaymessage(pl_sd->sess, "   -- the management"_s);
+map/atcommand.cpp:    pc_set_gm_level(pl_sd->status_key.account_id, newlev);
+map/atcommand.cpp:        trade_traderequest(sd, pl_sd->bl_id);
+map/atcommand.cpp:                    pl_sd->status.skill[sk].lv,
+map/atcommand.cpp:            if (pl_sd->status.skill[sk].lv)
+map/atcommand.cpp:    if (pl_sd->bl_m->flag.get(MapFlag::NOWARPTO)
+map/atcommand.cpp:    pc_setpos(sd, pl_sd->bl_m->name_, pl_sd->bl_x, pl_sd->bl_y, BeingRemoveWhy::WARPED);
+map/atcommand.cpp:    AString output = STRPRINTF("Jump to %s"_fmt, pl_sd->status_key.name);
+map/atcommand.cpp:    sd->followtarget = pl_sd->bl_id;
+map/atcommand.cpp:            int lvl = pl_sd->status.skill[skill_pool_skills[i]].lv;
+map/atcommand.cpp:    IP4Address ip = pl_sd->get_ip();
+map/atcommand.cpp:        if (pl_sd && pl_sd->state.auth)
+map/atcommand.cpp:            if (ip == pl_sd->get_ip())
+map/atcommand.cpp:                        pl_sd->status_key.name, pl_sd->mapname_,
+map/atcommand.cpp:                        pl_sd->bl_x, pl_sd->bl_y);
+map/atcommand.cpp:            && pl_sd->state.auth && s2 != s && sd->bl_m == pl_sd->bl_m
+map/atcommand.cpp:            && sd->bl_x == pl_sd->bl_x && sd->bl_y == pl_sd->bl_y
+map/atcommand.cpp:            pc_damage(nullptr, pl_sd, pl_sd->status.hp + 1);
+map/atcommand.cpp:            clif_displaymessage(pl_sd->sess, "The holy messenger has given judgement."_s);
+map/script-fun.cpp:            if (pl_sd && pl_sd->state.auth)
+map/script-fun.cpp:                if (m == pl_sd->bl_m && !pl_sd->pvp_timer)
+map/script-fun.cpp:                    pl_sd->pvp_timer = Timer(gettick() + 200_ms,
+map/script-fun.cpp:                                pl_sd->bl_id));
+map/script-fun.cpp:                    pl_sd->pvp_rank = 0;
+map/script-fun.cpp:                    pl_sd->pvp_point = 5;
+map/script-fun.cpp:            if (pl_sd && pl_sd->state.auth)
+map/script-fun.cpp:                if (m == pl_sd->bl_m)
+map/script-fun.cpp:                    pl_sd->pvp_timer.cancel();
+map/script-fun.cpp:    clif_displaymessage(pl_sd->sess, msg);
+map/intif.cpp:        if (pl_sd && pl_sd->state.auth)
+map/map.cpp:        if (pl_sd && pl_sd->state.auth)
+map/map.cpp:                if (pl_sd->status_key.name == nick)
