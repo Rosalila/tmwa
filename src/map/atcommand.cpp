@@ -434,7 +434,7 @@ ATCE atcommand_doge(Session *s, dumb_ptr<map_session_data> sd,
     if (message.startswith("balance"_s))
     {
         string character = map_charid2nick(sd->char_id_).to__lower().c_str();
-        clif_displaymessage(s,STRPRINTF("%s"_fmt,"shibe balance:"));
+        clif_displaymessage(s,"shibe balance:"_s);
         clif_displaymessage(s,STRPRINTF("%s"_fmt,(char*)dogeBalance(character).c_str()));
         return ATCE::OKAY;
     }
@@ -442,7 +442,7 @@ ATCE atcommand_doge(Session *s, dumb_ptr<map_session_data> sd,
     if (message.startswith("deposit"_s))
     {
         string character = map_charid2nick(sd->char_id_).to__lower().c_str();
-        clif_displaymessage(s,STRPRINTF("%s"_fmt,"deposit much doges here:"));
+        clif_displaymessage(s,STRPRINTF("%s"_fmt,"deposit much doges here:"_s));
         clif_displaymessage(s,STRPRINTF("%s"_fmt,(char*)dogeDeposit(character).c_str()));
 
         return ATCE::OKAY;
