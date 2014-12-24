@@ -76,8 +76,6 @@ string dogeDeposit(string character)
   strcat(doge_command_rm,character.c_str());
   strcat(doge_command_rm,"_address");
   system_return = system(doge_command_rm);
-  if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
 
   char doge_command[255];
   strcpy(doge_command,"./dogecoind getaccountaddress tmwplayer_");
@@ -111,8 +109,6 @@ string dogeBalance(string character)
   strcat(doge_command_rm,character.c_str());
   strcat(doge_command_rm,"_deposits");
   system_return = system(doge_command_rm);
-  if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
 
   char doge_command[255];
   strcpy(doge_command,"./dogecoind getreceivedbyaccount tmwplayer_");
@@ -160,8 +156,6 @@ string dogeWithdraw(string character, int amount, string address)
   strcat(doge_command_rm,character.c_str());
   strcat(doge_command_rm,"_deposits");
   system_return = system(doge_command_rm);
-  if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
 
   char doge_command[255];
   strcpy(doge_command,"./dogecoind getreceivedbyaccount tmwplayer_");
@@ -228,8 +222,6 @@ string dogeTip(string character, int amount, string character_to)
   strcat(doge_command_rm,character.c_str());
   strcat(doge_command_rm,"_deposits");
   system_return = system(doge_command_rm);
-  if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
 
   char doge_command[255];
   strcpy(doge_command,"./dogecoind getreceivedbyaccount tmwplayer_");
