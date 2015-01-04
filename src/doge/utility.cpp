@@ -85,7 +85,7 @@ string dogeDeposit(string character)
   strcat(doge_command,"_address");
   system_return = system(doge_command);
   if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
+    return "shibe sorry, dogecoin server down";
 
   char file_path[255];
   strcpy(file_path,"doge/");
@@ -118,7 +118,7 @@ string dogeBalance(string character)
   strcat(doge_command,"_deposits");
   system_return = system(doge_command);
   if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
+    return "shibe sorry, dogecoin server down";
 
   char file_path[255];
   strcpy(file_path,"doge/");
@@ -165,7 +165,7 @@ string dogeWithdraw(string character, int amount, string address)
   strcat(doge_command,"_deposits");
   system_return = system(doge_command);
   if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
+    return "shibe sorry, dogecoin server down";
 
   char file_path_deposits[255];
   strcpy(file_path_deposits,"doge/");
@@ -197,7 +197,7 @@ string dogeWithdraw(string character, int amount, string address)
   strcat(doge_command_send, toString(amount).c_str());
   system_return = system(doge_command_send);
   if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
+    return "shibe sorry, dogecoin server down";
 
   writeIntToFile(file_path, balance-amount-1);
 
@@ -231,7 +231,7 @@ string dogeTip(string character, int amount, string character_to)
   strcat(doge_command,"_deposits");
   system_return = system(doge_command);
   if(system_return!=0)
-    return "shibe sorry: dogecoin server down";
+    return "shibe sorry, dogecoin server down";
 
   char file_path_deposits[255];
   strcpy(file_path_deposits,"doge/");
