@@ -748,6 +748,13 @@ int pc_authok(AccountId id, int login_id2, TimeT connect_until_time,
         PRINTF("Connection accepted: Character '%s' (account: %d).\n"_fmt,
                 sd->status_key.name, sd->status_key.account_id);
 
+
+    dumb_ptr<map_session_data> pl_sd = sd->status_key.name.to__actual() ? map_nick2sd(sd->status_key.name) : sd;
+
+    //Ugly hardcoded auto die when login into the doge arena
+    if(pl_sd->mapname_ == "doge-arena"_s)
+      pc_damage(nullptr, pl_sd, pl_sd->status.hp + 1);
+
     sd->auto_ban_info.in_progress = 0;
 
     // Initialize antispam vars
