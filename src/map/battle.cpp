@@ -33,13 +33,16 @@
 
 #include "../io/cxxstdio.hpp"
 #include "../io/read.hpp"
+#include "../io/span.hpp"
 
 #include "../mmo/config_parse.hpp"
 #include "../mmo/cxxstdio_enums.hpp"
 
 #include "../high/utils.hpp"
 
+#include "battle_conf.hpp"
 #include "clif.hpp"
+#include "globals.hpp"
 #include "itemdb.hpp"
 #include "map.hpp"
 #include "mob.hpp"
@@ -52,13 +55,8 @@
 
 namespace tmwa
 {
-static Battle_Config init_battle_config();
-
-DIAG_PUSH();
-DIAG_I(shadow);
-struct Battle_Config battle_config = init_battle_config();
-DIAG_POP();
-
+namespace map
+{
 /*==========================================
  * 自分をロックしている対象の数を返す(汎用)
  * 戻りは整数で0以上
@@ -728,7 +726,7 @@ interval_t battle_get_adelay(dumb_ptr<block_list> bl)
 
         if (aspd_rate != 100)
             adelay = adelay * aspd_rate / 100;
-        return std::max(adelay, static_cast<interval_t>(battle_config.monster_max_aspd) * 2);
+        return std::max(adelay, battle_config.monster_max_aspd * 2);
     }
 }
 
@@ -743,7 +741,7 @@ interval_t battle_get_amotion(dumb_ptr<block_list> bl)
         interval_t amotion = 2_s;
         int aspd_rate = 100;
         if (bl->bl_type == BL::MOB)
-            amotion = static_cast<interval_t>(get_mob_db(bl->is_mob()->mob_class).amotion);
+            amotion = get_mob_db(bl->is_mob()->mob_class).amotion;
 
         if (sc_data)
         {
@@ -755,7 +753,7 @@ interval_t battle_get_amotion(dumb_ptr<block_list> bl)
 
         if (aspd_rate != 100)
             amotion = amotion * aspd_rate / 100;
-        return std::max(amotion, static_cast<interval_t>(battle_config.monster_max_aspd));
+        return std::max(amotion, battle_config.monster_max_aspd);
     }
 }
 
@@ -764,7 +762,7 @@ interval_t battle_get_dmotion(dumb_ptr<block_list> bl)
     nullpo_retr(interval_t::zero(), bl);
     if (bl->bl_type == BL::MOB)
     {
-        return static_cast<interval_t>(get_mob_db(bl->is_mob()->mob_class).dmotion);
+        return get_mob_db(bl->is_mob()->mob_class).dmotion;
     }
     else if (bl->bl_type == BL::PC)
     {
@@ -853,16 +851,6 @@ eptr<struct status_change, StatusChange, StatusChange::MAX_STATUSCHANGE> battle_
     case BL::PC:
         return bl->is_player()->sc_data;
     }
-    return nullptr;
-}
-
-short *battle_get_sc_count(dumb_ptr<block_list> bl)
-{
-    nullpo_retr(nullptr, bl);
-    if (bl->bl_type == BL::MOB)
-        return &bl->is_mob()->sc_count;
-    else if (bl->bl_type == BL::PC)
-        return &bl->is_player()->sc_count;
     return nullptr;
 }
 
@@ -995,17 +983,6 @@ int battle_stopattack(dumb_ptr<block_list> bl)
     return 0;
 }
 
-// 移動停止
-int battle_stopwalking(dumb_ptr<block_list> bl, int type)
-{
-    nullpo_retz(bl);
-    if (bl->bl_type == BL::MOB)
-        return mob_stop_walking(bl->is_mob(), type);
-    else if (bl->bl_type == BL::PC)
-        return pc_stop_walking(bl->is_player(), type);
-    return 0;
-}
-
 /*==========================================
  * ダメージ最終計算
  *------------------------------------------
@@ -1084,7 +1061,7 @@ struct Damage battle_calc_mob_weapon_attack(dumb_ptr<block_list> src,
         || battle_config.vit_penaly_type > 0)
         target_count +=
             battle_counttargeted(target, src,
-                    ATK(battle_config.agi_penaly_count_lv)); // FIXME
+                    battle_config.agi_penaly_count_lv);
     if (battle_config.agi_penaly_type > 0)
     {
         if (target_count >= battle_config.agi_penaly_count)
@@ -1170,7 +1147,7 @@ struct Damage battle_calc_mob_weapon_attack(dumb_ptr<block_list> src,
                 int t_def;
                 target_count =
                     1 + battle_counttargeted(target, src,
-                            ATK(battle_config.vit_penaly_count_lv)); // FIXME
+                            battle_config.vit_penaly_count_lv);
                 if (battle_config.vit_penaly_type > 0)
                 {
                     if (target_count >= battle_config.vit_penaly_count)
@@ -1362,7 +1339,7 @@ struct Damage battle_calc_pc_weapon_attack(dumb_ptr<block_list> src,
     flee = battle_get_flee(target);
     if (battle_config.agi_penaly_type > 0 || battle_config.vit_penaly_type > 0) //AGI、VITペナルティ設定が有効
         target_count += battle_counttargeted(target, src,
-                ATK(battle_config.agi_penaly_count_lv));  //対象の数を算出
+                battle_config.agi_penaly_count_lv);  //対象の数を算出
     if (battle_config.agi_penaly_type > 0)
     {
         if (target_count >= battle_config.agi_penaly_count)
@@ -1421,8 +1398,11 @@ struct Damage battle_calc_pc_weapon_attack(dumb_ptr<block_list> src,
 
     if (widx.ok())
     {
-        if OPTION_IS_SOME(sdidw, sd->inventory_data[widx])
+        OMATCH_BEGIN_SOME (sdidw, sd->inventory_data[widx])
+        {
             atkmin = atkmin * (80 + sdidw->wlv * 20) / 100;
+        }
+        OMATCH_END ();
     }
     if (sd->status.weapon == ItemLook::BOW)
     {                           //武器が弓矢の場合
@@ -1503,7 +1483,7 @@ struct Damage battle_calc_pc_weapon_attack(dumb_ptr<block_list> src,
                 int t_def;
                 target_count =
                     1 + battle_counttargeted(target, src,
-                            ATK(battle_config.vit_penaly_count_lv)); // FIXME
+                            battle_config.vit_penaly_count_lv);
                 if (battle_config.vit_penaly_type > 0)
                 {
                     if (target_count >= battle_config.vit_penaly_count)
@@ -1942,13 +1922,14 @@ ATK battle_weapon_attack(dumb_ptr<block_list> src, dumb_ptr<block_list> target,
             ItemNameId weapon;
             if (weapon_index.ok())
             {
-                if OPTION_IS_SOME(sdidw, sd->inventory_data[weapon_index])
+                OMATCH_BEGIN_SOME (sdidw, sd->inventory_data[weapon_index])
                 {
                     if (bool(sd->status.inventory[weapon_index].equip & EPOS::WEAPON))
                     {
                         weapon = sdidw->nameid;
                     }
                 }
+                OMATCH_END ();
             }
 
             MAP_LOG("PC%d %s:%d,%d WPNDMG %s%d %d FOR %d WPN %d"_fmt,
@@ -2184,380 +2165,5 @@ int battle_check_range(dumb_ptr<block_list> src, dumb_ptr<block_list> bl,
     return (path_search(&wpd, src->bl_m, src->bl_x + dx, src->bl_y + dy,
                          bl->bl_x - dx, bl->bl_y - dy, 0x10001) != -1) ? 1 : 0;
 }
-
-Battle_Config init_battle_config()
-{
-    DIAG_PUSH();
-    DIAG_I(shadow);
-    Battle_Config battle_config;
-    DIAG_POP();
-    {
-        battle_config.warp_point_debug = 0;
-        battle_config.enemy_critical = 0;
-        battle_config.enemy_critical_rate = 100;
-        battle_config.enemy_str = 1;
-        battle_config.enemy_perfect_flee = 0;
-        battle_config.casting_rate = 100;
-        battle_config.delay_rate = 100;
-        battle_config.delay_dependon_dex = 0;
-        battle_config.skill_delay_attack_enable = 0;
-        battle_config.monster_skill_add_range = 0;
-        battle_config.player_damage_delay = 1;
-        battle_config.flooritem_lifetime = std::chrono::duration_cast<std::chrono::milliseconds>(LIFETIME_FLOORITEM).count();
-        battle_config.item_auto_get = 0;
-        battle_config.drop_pickup_safety_zone = 20;
-        battle_config.item_first_get_time = 3000;
-        battle_config.item_second_get_time = 1000;
-        battle_config.item_third_get_time = 1000;
-
-        battle_config.base_exp_rate = 100;
-        battle_config.job_exp_rate = 100;
-        battle_config.death_penalty_type = 0;
-        battle_config.death_penalty_base = 0;
-        battle_config.death_penalty_job = 0;
-        battle_config.restart_hp_rate = 0;
-        battle_config.restart_sp_rate = 0;
-        battle_config.monster_hp_rate = 100;
-        battle_config.monster_max_aspd = 199;
-        battle_config.atcommand_gm_only = 0;
-        battle_config.gm_all_equipment = 0;
-        battle_config.monster_active_enable = 1;
-        battle_config.mob_skill_use = 1;
-        battle_config.mob_count_rate = 100;
-        battle_config.basic_skill_check = 1;
-        battle_config.player_invincible_time = 5000;
-        battle_config.skill_min_damage = 0;
-        battle_config.natural_healhp_interval = 6000;
-        battle_config.natural_healsp_interval = 8000;
-        battle_config.natural_heal_skill_interval = 10000;
-        battle_config.natural_heal_weight_rate = 50;
-        battle_config.itemheal_regeneration_factor = 1;
-        battle_config.arrow_decrement = 1;
-        battle_config.max_aspd = 199;
-        battle_config.max_hp = 32500;
-        battle_config.max_sp = 32500;
-        battle_config.max_lv = 99;  // [MouseJstr]
-        battle_config.max_parameter = 99;
-        battle_config.monster_skill_log = 0;
-        battle_config.battle_log = 0;
-        battle_config.save_log = 0;
-        battle_config.error_log = 1;
-        battle_config.etc_log = 1;
-        battle_config.save_clothcolor = 0;
-        battle_config.undead_detect_type = 0;
-        battle_config.agi_penaly_type = 0;
-        battle_config.agi_penaly_count = 3;
-        battle_config.agi_penaly_num = 0;
-        battle_config.agi_penaly_count_lv = static_cast<int>(ATK::FLEE); // FIXME
-        battle_config.vit_penaly_type = 0;
-        battle_config.vit_penaly_count = 3;
-        battle_config.vit_penaly_num = 0;
-        battle_config.vit_penaly_count_lv = static_cast<int>(ATK::DEF); // FIXME
-        battle_config.mob_changetarget_byskill = 0;
-        battle_config.player_attack_direction_change = 1;
-        battle_config.monster_attack_direction_change = 1;
-        battle_config.display_delay_skill_fail = 1;
-        battle_config.dead_branch_active = 0;
-        battle_config.show_steal_in_same_party = 0;
-        battle_config.hide_GM_session = 0;
-        battle_config.invite_request_check = 1;
-        battle_config.disp_experience = 0;
-        battle_config.prevent_logout = 1;   // Added by RoVeRT
-        battle_config.maximum_level = 255;  // Added by Valaris
-        battle_config.drops_by_luk = 0; // [Valaris]
-        battle_config.pk_mode = 0;  // [Valaris]
-        battle_config.multi_level_up = 0;   // [Valaris]
-        battle_config.hack_info_GM_level = 60;  // added by [Yor] (default: 60, GM level)
-        battle_config.any_warp_GM_min_level = 20;   // added by [Yor]
-        battle_config.min_hair_style = 0;
-        battle_config.max_hair_style = 20;
-        battle_config.min_hair_color = 0;
-        battle_config.max_hair_color = 9;
-        battle_config.min_cloth_color = 0;
-        battle_config.max_cloth_color = 4;
-
-        battle_config.castrate_dex_scale = 150;
-
-        battle_config.area_size = 14;
-
-        battle_config.chat_lame_penalty = 2;
-        battle_config.chat_spam_threshold = 10;
-        battle_config.chat_spam_flood = 10;
-        battle_config.chat_spam_ban = 1;
-        battle_config.chat_spam_warn = 8;
-        battle_config.chat_maxline = 255;
-
-        battle_config.packet_spam_threshold = 2;
-        battle_config.packet_spam_flood = 30;
-        battle_config.packet_spam_kick = 1;
-
-        battle_config.mask_ip_gms = 1;
-
-        battle_config.mob_splash_radius = -1;
-    }
-    return battle_config;
-}
-
-bool battle_config_read(ZString cfgName)
-{
-    bool rv = true;
-    io::ReadFile in(cfgName);
-    if (!in.is_open())
-    {
-        PRINTF("file not found: %s\n"_fmt, cfgName);
-        return false;
-    }
-
-    AString line;
-    while (in.getline(line))
-    {
-#define BATTLE_CONFIG_VAR(name) {#name##_s, &battle_config.name}
-        const struct
-        {
-            LString str;
-            int *val;
-        } data[] =
-        {
-            BATTLE_CONFIG_VAR(warp_point_debug),
-            BATTLE_CONFIG_VAR(enemy_critical),
-            BATTLE_CONFIG_VAR(enemy_critical_rate),
-            BATTLE_CONFIG_VAR(enemy_str),
-            BATTLE_CONFIG_VAR(enemy_perfect_flee),
-            BATTLE_CONFIG_VAR(casting_rate),
-            BATTLE_CONFIG_VAR(delay_rate),
-            BATTLE_CONFIG_VAR(delay_dependon_dex),
-            BATTLE_CONFIG_VAR(skill_delay_attack_enable),
-            BATTLE_CONFIG_VAR(monster_skill_add_range),
-            BATTLE_CONFIG_VAR(player_damage_delay),
-            BATTLE_CONFIG_VAR(flooritem_lifetime),
-            BATTLE_CONFIG_VAR(item_auto_get),
-            BATTLE_CONFIG_VAR(drop_pickup_safety_zone),
-            BATTLE_CONFIG_VAR(item_first_get_time),
-            BATTLE_CONFIG_VAR(item_second_get_time),
-            BATTLE_CONFIG_VAR(item_third_get_time),
-            BATTLE_CONFIG_VAR(base_exp_rate),
-            BATTLE_CONFIG_VAR(job_exp_rate),
-            BATTLE_CONFIG_VAR(death_penalty_type),
-            BATTLE_CONFIG_VAR(death_penalty_base),
-            BATTLE_CONFIG_VAR(death_penalty_job),
-            BATTLE_CONFIG_VAR(restart_hp_rate),
-            BATTLE_CONFIG_VAR(restart_sp_rate),
-            BATTLE_CONFIG_VAR(monster_hp_rate),
-            BATTLE_CONFIG_VAR(monster_max_aspd),
-            BATTLE_CONFIG_VAR(atcommand_gm_only),
-            BATTLE_CONFIG_VAR(atcommand_spawn_quantity_limit),
-            BATTLE_CONFIG_VAR(gm_all_equipment),
-            BATTLE_CONFIG_VAR(monster_active_enable),
-            BATTLE_CONFIG_VAR(mob_skill_use),
-            BATTLE_CONFIG_VAR(mob_count_rate),
-            BATTLE_CONFIG_VAR(basic_skill_check),
-            BATTLE_CONFIG_VAR(player_invincible_time),
-            BATTLE_CONFIG_VAR(skill_min_damage),
-            BATTLE_CONFIG_VAR(natural_healhp_interval),
-            BATTLE_CONFIG_VAR(natural_healsp_interval),
-            BATTLE_CONFIG_VAR(natural_heal_skill_interval),
-            BATTLE_CONFIG_VAR(natural_heal_weight_rate),
-            BATTLE_CONFIG_VAR(itemheal_regeneration_factor),
-            BATTLE_CONFIG_VAR(arrow_decrement),
-            BATTLE_CONFIG_VAR(max_aspd),
-            BATTLE_CONFIG_VAR(max_hp),
-            BATTLE_CONFIG_VAR(max_sp),
-            BATTLE_CONFIG_VAR(max_lv),
-            BATTLE_CONFIG_VAR(max_parameter),
-            BATTLE_CONFIG_VAR(monster_skill_log),
-            BATTLE_CONFIG_VAR(battle_log),
-            BATTLE_CONFIG_VAR(save_log),
-            BATTLE_CONFIG_VAR(error_log),
-            BATTLE_CONFIG_VAR(etc_log),
-            BATTLE_CONFIG_VAR(save_clothcolor),
-            BATTLE_CONFIG_VAR(undead_detect_type),
-            BATTLE_CONFIG_VAR(agi_penaly_type),
-            BATTLE_CONFIG_VAR(agi_penaly_count),
-            BATTLE_CONFIG_VAR(agi_penaly_num),
-            BATTLE_CONFIG_VAR(agi_penaly_count_lv),
-            BATTLE_CONFIG_VAR(vit_penaly_type),
-            BATTLE_CONFIG_VAR(vit_penaly_count),
-            BATTLE_CONFIG_VAR(vit_penaly_num),
-            BATTLE_CONFIG_VAR(vit_penaly_count_lv),
-            BATTLE_CONFIG_VAR(mob_changetarget_byskill),
-            BATTLE_CONFIG_VAR(player_attack_direction_change),
-            BATTLE_CONFIG_VAR(monster_attack_direction_change),
-            BATTLE_CONFIG_VAR(display_delay_skill_fail),
-            BATTLE_CONFIG_VAR(dead_branch_active),
-            BATTLE_CONFIG_VAR(show_steal_in_same_party),
-            BATTLE_CONFIG_VAR(hide_GM_session),
-            BATTLE_CONFIG_VAR(invite_request_check),
-            BATTLE_CONFIG_VAR(disp_experience),
-            BATTLE_CONFIG_VAR(prevent_logout),   // Added by RoVeRT
-            BATTLE_CONFIG_VAR(alchemist_summon_reward), // [Valaris]
-            BATTLE_CONFIG_VAR(maximum_level), // [Valaris]
-            BATTLE_CONFIG_VAR(drops_by_luk),   // [Valaris]
-            BATTLE_CONFIG_VAR(monsters_ignore_gm),   // [Valaris]
-            BATTLE_CONFIG_VAR(pk_mode), // [Valaris]
-            BATTLE_CONFIG_VAR(multi_level_up),   // [Valaris]
-            BATTLE_CONFIG_VAR(hack_info_GM_level),   // added by [Yor]
-            BATTLE_CONFIG_VAR(any_warp_GM_min_level), // added by [Yor]
-            BATTLE_CONFIG_VAR(min_hair_style),   // added by [MouseJstr]
-            BATTLE_CONFIG_VAR(max_hair_style),   // added by [MouseJstr]
-            BATTLE_CONFIG_VAR(min_hair_color),   // added by [MouseJstr]
-            BATTLE_CONFIG_VAR(max_hair_color),   // added by [MouseJstr]
-            BATTLE_CONFIG_VAR(min_cloth_color), // added by [MouseJstr]
-            BATTLE_CONFIG_VAR(max_cloth_color), // added by [MouseJstr]
-            BATTLE_CONFIG_VAR(castrate_dex_scale),   // added by [MouseJstr]
-            BATTLE_CONFIG_VAR(area_size), // added by [MouseJstr]
-            BATTLE_CONFIG_VAR(chat_lame_penalty),
-            BATTLE_CONFIG_VAR(chat_spam_threshold),
-            BATTLE_CONFIG_VAR(chat_spam_flood),
-            BATTLE_CONFIG_VAR(chat_spam_ban),
-            BATTLE_CONFIG_VAR(chat_spam_warn),
-            BATTLE_CONFIG_VAR(chat_maxline),
-            BATTLE_CONFIG_VAR(packet_spam_threshold),
-            BATTLE_CONFIG_VAR(packet_spam_flood),
-            BATTLE_CONFIG_VAR(packet_spam_kick),
-            BATTLE_CONFIG_VAR(mask_ip_gms),
-            BATTLE_CONFIG_VAR(mob_splash_radius),
-        };
-
-        if (is_comment(line))
-            continue;
-        XString w1;
-        ZString w2;
-        if (!config_split(line, &w1, &w2))
-        {
-            PRINTF("Bad config line: %s\n"_fmt, line);
-            rv = false;
-            continue;
-        }
-
-        if (w1 == "import"_s)
-        {
-            battle_config_read(w2);
-            continue;
-        }
-
-        for (auto datum : data)
-            if (w1 == datum.str)
-            {
-                *datum.val = config_switch(w2);
-                goto continue_outer;
-            }
-
-        PRINTF("WARNING: unknown battle conf key: %s\n"_fmt, AString(w1));
-        rv = false;
-
-    continue_outer:
-        ;
-    }
-
-    return rv;
-}
-
-void battle_config_check()
-{
-    {
-        if (static_cast<interval_t>(battle_config.flooritem_lifetime) < 1_s)
-            battle_config.flooritem_lifetime = std::chrono::duration_cast<std::chrono::milliseconds>(LIFETIME_FLOORITEM).count();
-        if (battle_config.restart_hp_rate < 0)
-            battle_config.restart_hp_rate = 0;
-        else if (battle_config.restart_hp_rate > 100)
-            battle_config.restart_hp_rate = 100;
-        if (battle_config.restart_sp_rate < 0)
-            battle_config.restart_sp_rate = 0;
-        else if (battle_config.restart_sp_rate > 100)
-            battle_config.restart_sp_rate = 100;
-        if (battle_config.natural_healhp_interval < NATURAL_HEAL_INTERVAL.count())
-            battle_config.natural_healhp_interval = NATURAL_HEAL_INTERVAL.count();
-        if (battle_config.natural_healsp_interval < NATURAL_HEAL_INTERVAL.count())
-            battle_config.natural_healsp_interval = NATURAL_HEAL_INTERVAL.count();
-        if (battle_config.natural_heal_skill_interval < NATURAL_HEAL_INTERVAL.count())
-            battle_config.natural_heal_skill_interval = NATURAL_HEAL_INTERVAL.count();
-        if (battle_config.natural_heal_weight_rate < 50)
-            battle_config.natural_heal_weight_rate = 50;
-        if (battle_config.natural_heal_weight_rate > 101)
-            battle_config.natural_heal_weight_rate = 101;
-        battle_config.monster_max_aspd =
-            2000 - battle_config.monster_max_aspd * 10;
-        if (battle_config.monster_max_aspd < 10)
-            battle_config.monster_max_aspd = 10;
-        if (battle_config.monster_max_aspd > 1000)
-            battle_config.monster_max_aspd = 1000;
-        battle_config.max_aspd = 2000 - battle_config.max_aspd * 10;
-        if (battle_config.max_aspd < 10)
-            battle_config.max_aspd = 10;
-        if (battle_config.max_aspd > 1000)
-            battle_config.max_aspd = 1000;
-        if (battle_config.max_hp > 1000000)
-            battle_config.max_hp = 1000000;
-        if (battle_config.max_hp < 100)
-            battle_config.max_hp = 100;
-        if (battle_config.max_sp > 1000000)
-            battle_config.max_sp = 1000000;
-        if (battle_config.max_sp < 100)
-            battle_config.max_sp = 100;
-        if (battle_config.max_parameter < 10)
-            battle_config.max_parameter = 10;
-        if (battle_config.max_parameter > 10000)
-            battle_config.max_parameter = 10000;
-
-        if (battle_config.agi_penaly_count < 2)
-            battle_config.agi_penaly_count = 2;
-        if (battle_config.vit_penaly_count < 2)
-            battle_config.vit_penaly_count = 2;
-
-        if (battle_config.hack_info_GM_level < 0)   // added by [Yor]
-            battle_config.hack_info_GM_level = 0;
-        else if (battle_config.hack_info_GM_level > 100)
-            battle_config.hack_info_GM_level = 100;
-
-        if (battle_config.any_warp_GM_min_level < 0)    // added by [Yor]
-            battle_config.any_warp_GM_min_level = 0;
-        else if (battle_config.any_warp_GM_min_level > 100)
-            battle_config.any_warp_GM_min_level = 100;
-
-        if (battle_config.chat_spam_ban < 0)
-            battle_config.chat_spam_ban = 0;
-        else if (battle_config.chat_spam_ban > 32767)
-            battle_config.chat_spam_ban = 32767;
-
-        if (battle_config.chat_spam_flood < 0)
-            battle_config.chat_spam_flood = 0;
-        else if (battle_config.chat_spam_flood > 32767)
-            battle_config.chat_spam_flood = 32767;
-
-        if (battle_config.chat_spam_warn < 0)
-            battle_config.chat_spam_warn = 0;
-        else if (battle_config.chat_spam_warn > 32767)
-            battle_config.chat_spam_warn = 32767;
-
-        if (battle_config.chat_spam_threshold < 0)
-            battle_config.chat_spam_threshold = 0;
-        else if (battle_config.chat_spam_threshold > 32767)
-            battle_config.chat_spam_threshold = 32767;
-
-        if (battle_config.chat_maxline < 1)
-            battle_config.chat_maxline = 1;
-        else if (battle_config.chat_maxline > 512)
-            battle_config.chat_maxline = 512;
-
-        if (battle_config.packet_spam_threshold < 0)
-            battle_config.packet_spam_threshold = 0;
-        else if (battle_config.packet_spam_threshold > 32767)
-            battle_config.packet_spam_threshold = 32767;
-
-        if (battle_config.packet_spam_flood < 0)
-            battle_config.packet_spam_flood = 0;
-        else if (battle_config.packet_spam_flood > 32767)
-            battle_config.packet_spam_flood = 32767;
-
-        if (battle_config.packet_spam_kick < 0)
-            battle_config.packet_spam_kick = 0;
-        else if (battle_config.packet_spam_kick > 1)
-            battle_config.packet_spam_kick = 1;
-
-        if (battle_config.mask_ip_gms < 0)
-            battle_config.mask_ip_gms = 0;
-        else if (battle_config.mask_ip_gms > 1)
-            battle_config.mask_ip_gms = 1;
-    }
-}
+} // namespace map
 } // namespace tmwa

@@ -37,7 +37,10 @@
 #include "../io/extract.hpp"
 #include "../io/lock.hpp"
 #include "../io/read.hpp"
+#include "../io/span.hpp"
 #include "../io/write.hpp"
+
+#include "../mmo/config_parse.hpp"
 
 #include "../proto2/char-map.hpp"
 
@@ -47,6 +50,8 @@
 #include "../wire/packets.hpp"
 
 #include "char.hpp"
+#include "globals.hpp"
+#include "inter_conf.hpp"
 #include "int_party.hpp"
 #include "int_storage.hpp"
 
@@ -55,20 +60,8 @@
 
 namespace tmwa
 {
-static
-AString accreg_txt = "save/accreg.txt"_s;
-
-struct accreg
+namespace char_
 {
-    AccountId account_id;
-    int reg_num;
-    Array<GlobalReg, ACCOUNT_REG_NUM> reg;
-};
-static
-Map<AccountId, struct accreg> accreg_db;
-
-int party_share_level = 10;
-
 //--------------------------------------------------------
 
 // アカウント変数を文字列へ変換
@@ -85,7 +78,7 @@ AString inter_accreg_tostr(struct accreg *reg)
 
 // アカウント変数を文字列から変換
 static
-bool extract(XString str, struct accreg *reg)
+bool impl_extract(XString str, struct accreg *reg)
 {
     std::vector<GlobalReg> vars;
     if (!extract(str,
@@ -109,7 +102,7 @@ void inter_accreg_init(void)
 {
     int c = 0;
 
-    io::ReadFile in(accreg_txt);
+    io::ReadFile in(inter_conf.accreg_txt);
     if (!in.is_open())
         return;
     AString line;
@@ -122,7 +115,7 @@ void inter_accreg_init(void)
         }
         else
         {
-            PRINTF("inter: accreg: broken data [%s] line %d\n"_fmt, accreg_txt,
+            PRINTF("inter: accreg: broken data [%s] line %d\n"_fmt, inter_conf.accreg_txt,
                     c);
         }
         c++;
@@ -144,47 +137,17 @@ void inter_accreg_save_sub(struct accreg *reg, io::WriteFile& fp)
 static
 int inter_accreg_save(void)
 {
-    io::WriteLock fp(accreg_txt);
+    io::WriteLock fp(inter_conf.accreg_txt);
     if (!fp.is_open())
     {
         PRINTF("int_accreg: cant write [%s] !!! data is lost !!!\n"_fmt,
-                accreg_txt);
+                inter_conf.accreg_txt);
         return 1;
     }
     for (auto& pair : accreg_db)
         inter_accreg_save_sub(&pair.second, fp);
 
     return 0;
-}
-
-bool inter_config(XString w1, ZString w2)
-{
-    {
-        if (w1 == "storage_txt"_s)
-        {
-            storage_txt = w2;
-        }
-        else if (w1 == "party_txt"_s)
-        {
-            party_txt = w2;
-        }
-        else if (w1 == "accreg_txt"_s)
-        {
-            accreg_txt = w2;
-        }
-        else if (w1 == "party_share_level"_s)
-        {
-            party_share_level = atoi(w2.c_str());
-            if (party_share_level < 0)
-                party_share_level = 0;
-        }
-        else
-        {
-            return false;
-        }
-    }
-
-    return true;
 }
 
 // セーブ
@@ -270,7 +233,7 @@ void mapif_account_reg_reply(Session *s, AccountId account_id)
     Packet_Head<0x3804> head_04;
     head_04.account_id = account_id;
     std::vector<Packet_Repeat<0x3804>> repeat_04;
-    if OPTION_IS_SOME(reg, reg_)
+    OMATCH_BEGIN_SOME (reg, reg_)
     {
         repeat_04.resize(reg->reg_num);
         assert (reg->reg_num < ACCOUNT_REG_NUM);
@@ -280,6 +243,7 @@ void mapif_account_reg_reply(Session *s, AccountId account_id)
             repeat_04[j].value = reg->reg[j].value;
         }
     }
+    OMATCH_END ();
     send_vpacket<0x3804, 8, 36>(s, head_04, repeat_04);
 }
 
@@ -485,4 +449,5 @@ RecvResult inter_parse_frommap(Session *ms, uint16_t packet_id)
 
     return rv;
 }
+} // namespace char_
 } // namespace tmwa

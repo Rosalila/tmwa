@@ -25,13 +25,8 @@
 
 namespace tmwa
 {
-void chrif_setuserid(AccountName);
-void chrif_setpasswd(AccountPass);
-AccountPass chrif_getpasswd(void);
-
-void chrif_setip(IP4Address);
-void chrif_setport(int);
-
+namespace map
+{
 int chrif_isconnect(void);
 
 int chrif_authreq(dumb_ptr<map_session_data>);
@@ -47,12 +42,8 @@ void chrif_changeemail(AccountId id, AccountEmail actual_email, AccountEmail new
 void chrif_char_ask_name(AccountId id, CharName character_name, short operation_type,
         HumanTimeDiff modif);
 int chrif_saveaccountreg2(dumb_ptr<map_session_data> sd);
-int chrif_reloadGMdb(void);
 int chrif_send_divorce(CharId char_id);
 
 void do_init_chrif(void);
-
-// only used by intif.cpp
-// and clif.cpp for the new on_delete stuff ...
-extern Session *char_session;
+} // namespace map
 } // namespace tmwa

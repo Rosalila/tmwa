@@ -30,6 +30,7 @@
 #include "../generic/random.hpp"
 
 #include "../io/cxxstdio.hpp"
+#include "../io/extract.hpp"
 
 #include "../net/timer.hpp"
 
@@ -40,8 +41,10 @@
 
 #include "atcommand.hpp"
 #include "battle.hpp"
+#include "battle_conf.hpp"
 #include "chrif.hpp"
 #include "clif.hpp"
+#include "globals.hpp"
 #include "intif.hpp"
 #include "itemdb.hpp"
 #include "magic-interpreter-base.hpp"
@@ -62,6 +65,8 @@
 using namespace std;
 
 namespace tmwa
+{
+namespace map
 {
 static
 Array<LString, 11> pos_str //=
@@ -124,29 +129,33 @@ void builtin_callfunc(ScriptState *st)
     RString str = conv_str(st, &AARG(0));
     Option<P<const ScriptBuffer>> scr_ = userfunc_db.get(str);
 
-    if OPTION_IS_SOME(scr, scr_)
+    OMATCH_BEGIN (scr_)
     {
-        int j = 0;
-        assert (st->start + 3 == st->end);
+        OMATCH_CASE_SOME (scr)
+        {
+            int j = 0;
+            assert (st->start + 3 == st->end);
 #if 0
-        for (int i = st->start + 3; i < st->end; i++, j++)
-            push_copy(st->stack, i);
+            for (int i = st->start + 3; i < st->end; i++, j++)
+                push_copy(st->stack, i);
 #endif
 
-        push_int<ScriptDataInt>(st->stack, j); // 引数の数をプッシュ
-        push_int<ScriptDataInt>(st->stack, st->defsp); // 現在の基準スタックポインタをプッシュ
-        push_int<ScriptDataInt>(st->stack, st->scriptp.pos);   // 現在のスクリプト位置をプッシュ
-        push_script<ScriptDataRetInfo>(st->stack, TRY_UNWRAP(st->scriptp.code, abort()));  // 現在のスクリプトをプッシュ
+            push_int<ScriptDataInt>(st->stack, j); // 引数の数をプッシュ
+            push_int<ScriptDataInt>(st->stack, st->defsp); // 現在の基準スタックポインタをプッシュ
+            push_int<ScriptDataInt>(st->stack, st->scriptp.pos);   // 現在のスクリプト位置をプッシュ
+            push_script<ScriptDataRetInfo>(st->stack, TRY_UNWRAP(st->scriptp.code, abort()));  // 現在のスクリプトをプッシュ
 
-        st->scriptp = ScriptPointer(scr, 0);
-        st->defsp = st->start + 4 + j;
-        st->state = ScriptEndState::GOTO;
+            st->scriptp = ScriptPointer(scr, 0);
+            st->defsp = st->start + 4 + j;
+            st->state = ScriptEndState::GOTO;
+        }
+        OMATCH_CASE_NONE ()
+        {
+            PRINTF("script:callfunc: function not found! [%s]\n"_fmt, str);
+            st->state = ScriptEndState::END;
+        }
     }
-    else
-    {
-        PRINTF("script:callfunc: function not found! [%s]\n"_fmt, str);
-        st->state = ScriptEndState::END;
-    }
+    OMATCH_END ();
 }
 
 /*==========================================
@@ -683,24 +692,23 @@ int getarraysize(ScriptState *st, SIR reg)
     for (; i < 256; i++)
     {
         struct script_data vd = get_val2(st, reg.iplus(i));
-        MATCH (vd)
+        MATCH_BEGIN (vd)
         {
-            CASE (const ScriptDataStr&, u)
+            MATCH_CASE (const ScriptDataStr&, u)
             {
                 if (u.str[0])
                     c = i;
-                goto continue_outer;
+                continue;
             }
-            CASE (const ScriptDataInt&, u)
+            MATCH_CASE (const ScriptDataInt&, u)
             {
                 if (u.numi)
                     c = i;
-                goto continue_outer;
+                continue;
             }
         }
+        MATCH_END ();
         abort();
-    continue_outer:
-        ;
     }
     return c + 1;
 }
@@ -785,8 +793,11 @@ void builtin_countitem(ScriptState *st)
     {
         ZString name = ZString(conv_str(st, data));
         Option<P<struct item_data>> item_data_ = itemdb_searchname(name);
-        if OPTION_IS_SOME(item_data, item_data_)
+        OMATCH_BEGIN_SOME (item_data, item_data_)
+        {
             nameid = item_data->nameid;
+        }
+        OMATCH_END ();
     }
     else
         nameid = wrap<ItemNameId>(conv_num(st, data));
@@ -828,8 +839,11 @@ void builtin_checkweight(ScriptState *st)
     {
         ZString name = ZString(conv_str(st, data));
         Option<P<struct item_data>> item_data_ = itemdb_searchname(name);
-        if OPTION_IS_SOME(item_data, item_data_)
+        OMATCH_BEGIN_SOME (item_data, item_data_)
+        {
             nameid = item_data->nameid;
+        }
+        OMATCH_END ();
     }
     else
         nameid = wrap<ItemNameId>(conv_num(st, data));
@@ -873,8 +887,11 @@ void builtin_getitem(ScriptState *st)
     {
         ZString name = ZString(conv_str(st, data));
         Option<P<struct item_data>> item_data_ = itemdb_searchname(name);
-        if OPTION_IS_SOME(item_data, item_data_)
+        OMATCH_BEGIN_SOME (item_data, item_data_)
+        {
             nameid = item_data->nameid;
+        }
+        OMATCH_END ();
     }
     else
         nameid = wrap<ItemNameId>(conv_num(st, data));
@@ -926,8 +943,11 @@ void builtin_makeitem(ScriptState *st)
     {
         ZString name = ZString(conv_str(st, data));
         Option<P<struct item_data>> item_data_ = itemdb_searchname(name);
-        if OPTION_IS_SOME(item_data, item_data_)
+        OMATCH_BEGIN_SOME (item_data, item_data_)
+        {
             nameid = item_data->nameid;
+        }
+        OMATCH_END ();
     }
     else
         nameid = wrap<ItemNameId>(conv_num(st, data));
@@ -970,8 +990,11 @@ void builtin_delitem(ScriptState *st)
     {
         ZString name = ZString(conv_str(st, data));
         Option<P<struct item_data>> item_data_ = itemdb_searchname(name);
-        if OPTION_IS_SOME(item_data, item_data_)
+        OMATCH_BEGIN_SOME (item_data, item_data_)
+        {
             nameid = item_data->nameid;
+        }
+        OMATCH_END ();
     }
     else
         nameid = wrap<ItemNameId>(conv_num(st, data));
@@ -1145,10 +1168,18 @@ void builtin_getequipid(ScriptState *st)
     if (i.ok())
     {
         Option<P<struct item_data>> item_ = sd->inventory_data[i];
-        if OPTION_IS_SOME(item, item_)
-            push_int<ScriptDataInt>(st->stack, unwrap<ItemNameId>(item->nameid));
-        else
-            push_int<ScriptDataInt>(st->stack, 0);
+        OMATCH_BEGIN (item_)
+        {
+            OMATCH_CASE_SOME (item)
+            {
+                push_int<ScriptDataInt>(st->stack, unwrap<ItemNameId>(item->nameid));
+            }
+            OMATCH_CASE_NONE ()
+            {
+                push_int<ScriptDataInt>(st->stack, 0);
+            }
+        }
+        OMATCH_END ();
     }
     else
     {
@@ -1174,10 +1205,18 @@ void builtin_getequipname(ScriptState *st)
     if (i.ok())
     {
         Option<P<struct item_data>> item_ = sd->inventory_data[i];
-        if OPTION_IS_SOME(item, item_)
-            buf = STRPRINTF("%s-[%s]"_fmt, pos_str[num - 1], item->jname);
-        else
-            buf = STRPRINTF("%s-[%s]"_fmt, pos_str[num - 1], pos_str[10]);
+        OMATCH_BEGIN (item_)
+        {
+            OMATCH_CASE_SOME (item)
+            {
+                buf = STRPRINTF("%s-[%s]"_fmt, pos_str[num - 1], item->jname);
+            }
+            OMATCH_CASE_NONE ()
+            {
+                buf = STRPRINTF("%s-[%s]"_fmt, pos_str[num - 1], pos_str[10]);
+            }
+        }
+        OMATCH_END ();
     }
     else
     {
@@ -1897,8 +1936,11 @@ void builtin_getareadropitem(ScriptState *st)
     {
         ZString name = ZString(conv_str(st, data));
         Option<P<struct item_data>> item_data_ = itemdb_searchname(name);
-        if OPTION_IS_SOME(item_data, item_data_)
+        OMATCH_BEGIN_SOME (item_data, item_data_)
+        {
             item = item_data->nameid;
+        }
+        OMATCH_END ();
     }
     else
         item = wrap<ItemNameId>(conv_num(st, data));
@@ -2078,10 +2120,11 @@ void builtin_setmapflag(ScriptState *st)
     int i = conv_num(st, &AARG(1));
     MapFlag mf = map_flag_from_int(i);
     Option<P<map_local>> m_ = map_mapname2mapid(str);
-    if OPTION_IS_SOME(m, m_)
+    OMATCH_BEGIN_SOME (m, m_)
     {
         m->flag.set(mf, 1);
     }
+    OMATCH_END ();
 }
 
 static
@@ -2091,10 +2134,11 @@ void builtin_removemapflag(ScriptState *st)
     int i = conv_num(st, &AARG(1));
     MapFlag mf = map_flag_from_int(i);
     Option<P<map_local>> m_ = map_mapname2mapid(str);
-    if OPTION_IS_SOME(m, m_)
+    OMATCH_BEGIN_SOME (m, m_)
     {
         m->flag.set(mf, 0);
     }
+    OMATCH_END ();
 }
 
 static
@@ -2106,10 +2150,11 @@ void builtin_getmapflag(ScriptState *st)
     int i = conv_num(st, &AARG(1));
     MapFlag mf = map_flag_from_int(i);
     Option<P<map_local>> m_ = map_mapname2mapid(str);
-    if OPTION_IS_SOME(m, m_)
+    OMATCH_BEGIN_SOME (m, m_)
     {
         r = m->flag.get(mf);
     }
+    OMATCH_END ();
 
     push_int<ScriptDataInt>(st->stack, r);
 }
@@ -2274,10 +2319,6 @@ void builtin_divorce(ScriptState *st)
 {
     dumb_ptr<map_session_data> sd = script_rid2sd(st);
 
-    st->state = ScriptEndState::STOP;           // rely on pc_divorce to restart
-
-    sd->npc_flags.divorce = 1;
-
     if (sd == nullptr || pc_divorce(sd) < 0)
     {
         push_int<ScriptDataInt>(st->stack, 0);
@@ -2404,7 +2445,7 @@ void builtin_getunactivatedpoolskilllist(ScriptState *st)
     if (!sd)
         return;
 
-    for (i = 0; i < skill_pool_skills_size; i++)
+    for (i = 0; i < skill_pool_skills.size(); i++)
     {
         SkillID skill_id = skill_pool_skills[i];
 
@@ -2643,6 +2684,69 @@ void builtin_npcwarp(ScriptState *st)
 }
 
 /*==========================================
+ * npcareawarp [remoitnane] [wushin]
+ * Move NPC to a new area on the same map.
+ *------------------------------------------
+ */
+static
+void builtin_npcareawarp(ScriptState *st)
+{
+    int x0, y0, x1, y1, x, y, max, cb, lx = -1, ly = -1, j = 0;
+    dumb_ptr<npc_data> nd = nullptr;
+
+    NpcName npc = stringish<NpcName>(ZString(conv_str(st, &AARG(5))));
+    nd = npc_name2id(npc);
+
+    x0 = conv_num(st, &AARG(0));
+    y0 = conv_num(st, &AARG(1));
+    x1 = conv_num(st, &AARG(2));
+    y1 = conv_num(st, &AARG(3));
+    cb = conv_num(st, &AARG(4));
+
+    if (!nd)
+    {
+        PRINTF("builtin_npcareawarp: no such npc: %s\n"_fmt, npc);
+        return;
+    }
+
+    max = (y1 - y0 + 1) * (x1 - x0 + 1) * 3;
+    if (max > 1000)
+        max = 1000;
+
+    P<map_local> m = nd->bl_m;
+    if (cb) {
+        do
+        {
+            x = random_::in(x0, x1);
+            y = random_::in(y0, y1);
+        }
+        while (bool(map_getcell(m, x, y) & MapCell::UNWALKABLE)
+             && (++j) < max);
+        if (j >= max)
+        {
+            if (lx >= 0)
+            {                   // Since reference went wrong, the place which boiled before is used.
+                x = lx;
+                y = ly;
+            }
+            else
+                return;       // Since reference of the place which boils first went wrong, it stops.
+        }
+    }
+    else
+        x = random_::in(x0, x1);
+        y = random_::in(y0, y1);
+
+    npc_enable(npc, 0);
+    map_delblock(nd); /* [Freeyorp] */
+    nd->bl_x = x;
+    nd->bl_y = y;
+    map_addblock(nd);
+    npc_enable(npc, 1);
+
+}
+
+/*==========================================
  * message [MouseJstr]
  *------------------------------------------
  */
@@ -2812,6 +2916,24 @@ void builtin_isin(ScriptState *st)
               (sd->bl_x >= x1 && sd->bl_x <= x2)
               && (sd->bl_y >= y1 && sd->bl_y <= y2)
               && (str == sd->bl_m->name_));
+}
+
+/*==========================================
+ * Check whether the coords are collision
+ *------------------------------------------
+ */
+static
+void builtin_iscollision(ScriptState *st)
+{
+    int x, y;
+    MapName mapname = stringish<MapName>(ZString(conv_str(st, &AARG(0))));
+    P<map_local> m = TRY_UNWRAP(map_mapname2mapid(mapname), return);
+
+    x = conv_num(st, &AARG(1));
+    y = conv_num(st, &AARG(2));
+
+    push_int<ScriptDataInt>(st->stack,
+        bool(map_getcell(m, x, y) & MapCell::UNWALKABLE));
 }
 
 // Trigger the shop on a (hopefully) nearby shop NPC
@@ -3027,12 +3149,14 @@ BuiltinFunction builtin_functions[] =
     BUILTIN(unequipbyid, "i"_s, '\0'),
     BUILTIN(gmcommand, "s"_s, '\0'),
     BUILTIN(npcwarp, "xys"_s, '\0'),
+    BUILTIN(npcareawarp, "xyxyis"_s, '\0'),
     BUILTIN(message, "Ps"_s, '\0'),
     BUILTIN(npctalk, "s"_s, '\0'),
     BUILTIN(getlook, "i"_s, 'i'),
     BUILTIN(getsavepoint, "i"_s, '.'),
     BUILTIN(areatimer, "MxyxytE"_s, '\0'),
     BUILTIN(isin, "Mxyxy"_s, 'i'),
+    BUILTIN(iscollision, "Mxy"_s, 'i'),
     BUILTIN(shop, "s"_s, '\0'),
     BUILTIN(isdead, ""_s, 'i'),
     BUILTIN(fakenpcname, "ssi"_s, '\0'),
@@ -3042,4 +3166,5 @@ BuiltinFunction builtin_functions[] =
     BUILTIN(mapexit, ""_s, '\0'),
     {nullptr, ""_s, ""_s, '\0'},
 };
+} // namespace map
 } // namespace tmwa

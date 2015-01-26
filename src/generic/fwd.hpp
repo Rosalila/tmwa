@@ -39,4 +39,23 @@ template<class K, class V>
 class UPMap;
 
 class InternPool;
+
+// arrays are complicated
+template<class I, I be, I en>
+struct ExclusiveIndexing;
+template<size_t n>
+using SimpleIndexing = ExclusiveIndexing<size_t, 0, n>;
+template<class I, I lo, I hi>
+struct InclusiveIndexing;
+template<class E, E n=E::COUNT>
+struct EnumIndexing;
+template<class I, size_t limit>
+struct InventoryIndexing;
+template<class T, class I>
+struct GenericArray;
+template<class T, size_t n>
+using Array = GenericArray<T, SimpleIndexing<n>>;
+
+template<class T, class E, E max>
+using earray = GenericArray<T, EnumIndexing<E, max>>;
 } // namespace tmwa

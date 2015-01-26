@@ -48,12 +48,15 @@
 
 #include "atcommand.hpp"
 #include "battle.hpp"
+#include "battle_conf.hpp"
 #include "chrif.hpp"
 #include "clif.hpp"
+#include "globals.hpp"
 #include "intif.hpp"
 #include "itemdb.hpp"
 #include "magic-stmt.hpp"
 #include "map.hpp"
+#include "map_conf.hpp"
 #include "npc.hpp"
 #include "party.hpp"
 #include "path.hpp"
@@ -66,6 +69,8 @@
 
 
 namespace tmwa
+{
+namespace map
 {
 // PVP順位計算の間隔
 constexpr std::chrono::milliseconds PVP_CALCRANK_INTERVAL =
@@ -253,10 +258,6 @@ earray<EPOS, EQUIP, EQUIP::COUNT> equip_pos //=
     EPOS::WEAPON,
     EPOS::ARROW,
 }};
-
-// TODO use DMap<>
-static
-std::map<AccountId, GmLevel> gm_accountm;
 
 static
 int pc_checkoverhp(dumb_ptr<map_session_data> sd);
@@ -555,14 +556,22 @@ int pc_setequipindex(dumb_ptr<map_session_data> sd)
                     sd->equip_index_maybe[j] = i;
             if (bool(sd->status.inventory[i].equip & EPOS::WEAPON))
             {
-                if OPTION_IS_SOME(sdidi, sd->inventory_data[i])
-                    sd->weapontype1 = sdidi->look;
-                else
-                    sd->weapontype1 = ItemLook::NONE;
+                OMATCH_BEGIN (sd->inventory_data[i])
+                {
+                    OMATCH_CASE_SOME (sdidi)
+                    {
+                        sd->weapontype1 = sdidi->look;
+                    }
+                    OMATCH_CASE_NONE ()
+                    {
+                        sd->weapontype1 = ItemLook::NONE;
+                    }
+                }
+                OMATCH_END ();
             }
             if (bool(sd->status.inventory[i].equip & EPOS::SHIELD))
             {
-                if OPTION_IS_SOME(sdidi, sd->inventory_data[i])
+                OMATCH_BEGIN_SOME (sdidi, sd->inventory_data[i])
                 {
                     if (sdidi->type == ItemType::WEAPON)
                     {
@@ -570,6 +579,7 @@ int pc_setequipindex(dumb_ptr<map_session_data> sd)
                             assert(0 && "unreachable - offhand weapons are not supported");
                     }
                 }
+                OMATCH_END ();
             }
         }
     }
@@ -588,7 +598,7 @@ int pc_isequip(dumb_ptr<map_session_data> sd, IOff0 n)
 
     sc_data = battle_get_sc_data(sd);
 
-    GmLevel gm_all_equipment = GmLevel::from(static_cast<uint32_t>(battle_config.gm_all_equipment));
+    GmLevel gm_all_equipment = battle_config.gm_all_equipment;
     if (gm_all_equipment && pc_isGM(sd).satisfies(gm_all_equipment))
         return 1;
 
@@ -606,7 +616,7 @@ int pc_isequip(dumb_ptr<map_session_data> sd, IOff0 n)
  * char鯖から送られてきたステータスを設定
  *------------------------------------------
  */
-int pc_authok(AccountId id, int login_id2, TimeT connect_until_time,
+int pc_authok(AccountId id, int login_id2,
         short tmw_version, const CharKey *st_key, const CharData *st_data)
 {
     dumb_ptr<map_session_data> sd = nullptr;
@@ -684,7 +694,6 @@ int pc_authok(AccountId id, int login_id2, TimeT connect_until_time,
         // sd->sc_data[i].timer = nullptr;
         sd->sc_data[i].val1 = 0;
     }
-    sd->sc_count = 0;
 
     // パーティー関係の初期化
     sd->party_sended = 0;
@@ -758,25 +767,16 @@ int pc_authok(AccountId id, int login_id2, TimeT connect_until_time,
     sd->auto_ban_info.in_progress = 0;
 
     // Initialize antispam vars
-    sd->chat_reset_due = TimeT();
+    sd->chat_reset_due = tick_t();
     sd->chat_lines_in = sd->chat_total_repeats = 0;
-    sd->chat_repeat_reset_due = TimeT();
+    sd->chat_repeat_reset_due = tick_t();
     sd->chat_lastmsg = RString();
 
     for (tick_t& t : sd->flood_rates)
         t = tick_t();
-    sd->packet_flood_reset_due = TimeT();
+    sd->packet_flood_reset_due = tick_t();
     sd->packet_flood_in = 0;
 
-    // message of the limited time of the account
-    if (connect_until_time)
-    {
-        timestamp_seconds_buffer buffer;
-        stamp_time(buffer, &connect_until_time);
-        AString tmpstr = STRPRINTF("Your account time limit is: %s"_fmt, buffer);
-
-        clif_wis_message(sd->sess, wisp_server_name, tmpstr);
-    }
     pc_calcstatus(sd, 1);
 
     return 0;
@@ -795,7 +795,7 @@ void pc_show_motd(dumb_ptr<map_session_data> sd)
     clif_displaymessage(sd->sess, "This server is Free Software, for details type @source in chat or use the tmwa-source tool"_s);
 
     sd->state.seen_motd = true;
-    io::ReadFile in(motd_txt);
+    io::ReadFile in(map_conf.motd_txt);
     if (in.is_open())
     {
         AString buf;
@@ -830,7 +830,8 @@ int pc_calc_skillpoint(dumb_ptr<map_session_data> sd)
 
     nullpo_retz(sd);
 
-    for (i = 0; i < skill_pool_skills_size; i++) {
+    for (i = 0; i < skill_pool_skills.size(); i++)
+    {
         int lv = sd->status.skill[skill_pool_skills[i]].lv;
         if (lv)
             skill_points += ((lv * (lv - 1)) >> 1) - 1;
@@ -1015,13 +1016,14 @@ int pc_calcstatus(dumb_ptr<map_session_data> sd, int first)
                 || sd->equip_index_maybe[EQUIP::LEGS] == index))
             continue;
 
-        if OPTION_IS_SOME(sdidi, sd->inventory_data[index])
+        OMATCH_BEGIN_SOME (sdidi, sd->inventory_data[index])
         {
             sd->spellpower_bonus_target +=
                 sdidi->magic_bonus;
 
             // used to apply cards
         }
+        OMATCH_END ();
     }
 
 #ifdef USE_ASTRAL_SOUL_SKILL
@@ -1050,7 +1052,7 @@ int pc_calcstatus(dumb_ptr<map_session_data> sd, int first)
             && (sd->equip_index_maybe[EQUIP::TORSO] == index
                 || sd->equip_index_maybe[EQUIP::LEGS] == index))
             continue;
-        if OPTION_IS_SOME(sdidi, sd->inventory_data[index])
+        OMATCH_BEGIN_SOME (sdidi, sd->inventory_data[index])
         {
             sd->def += sdidi->def;
             if (sdidi->type == ItemType::WEAPON)
@@ -1089,6 +1091,7 @@ int pc_calcstatus(dumb_ptr<map_session_data> sd, int first)
                         arg);
             }
         }
+        OMATCH_END ();
     }
 
     if (battle_is_unarmed(sd))
@@ -1101,7 +1104,7 @@ int pc_calcstatus(dumb_ptr<map_session_data> sd, int first)
     if (aidx.ok())
     {
         IOff0 index = aidx;
-        if OPTION_IS_SOME(sdidi, sd->inventory_data[index])
+        OMATCH_BEGIN_SOME (sdidi, sd->inventory_data[index])
         {                       //まだ属性が入っていない
             argrec_t arg[2] =
             {
@@ -1115,6 +1118,7 @@ int pc_calcstatus(dumb_ptr<map_session_data> sd, int first)
             sd->state.lr_flag_is_arrow_2 = 0;
             sd->arrow_atk += sdidi->atk;
         }
+        OMATCH_END ();
     }
     sd->def += (refinedef + 50) / 100;
 
@@ -1291,7 +1295,6 @@ int pc_calcstatus(dumb_ptr<map_session_data> sd, int first)
     }
 
     // スキルやステータス異常による残りのパラメータ補正
-    if (sd->sc_count)
     {
         // ATK/DEF変化形
         if (sd->sc_data[StatusChange::SC_POISON].timer) // 毒状態
@@ -1326,7 +1329,7 @@ int pc_calcstatus(dumb_ptr<map_session_data> sd, int first)
     if (sd->attack_spell_override)
         sd->aspd = sd->attack_spell_delay;
 
-    sd->aspd = std::max(sd->aspd, static_cast<interval_t>(battle_config.max_aspd));
+    sd->aspd = std::max(sd->aspd, battle_config.max_aspd);
     sd->amotion = sd->aspd;
     sd->dmotion = std::chrono::milliseconds(800 - sd->paramc[ATTR::AGI] * 4);
     sd->dmotion = std::max(sd->dmotion, 400_ms);
@@ -2129,7 +2132,7 @@ int pc_useitem(dumb_ptr<map_session_data> sd, IOff0 n)
 
     if (!n.ok())
         return 0;
-    if OPTION_IS_SOME(sdidn, sd->inventory_data[n])
+    OMATCH_BEGIN_SOME (sdidn, sd->inventory_data[n])
     {
         amount = sd->status.inventory[n].amount;
         if (!sd->status.inventory[n].nameid
@@ -2146,6 +2149,7 @@ int pc_useitem(dumb_ptr<map_session_data> sd, IOff0 n)
 
         run_script(ScriptPointer(script, 0), sd->bl_id, BlockId());
     }
+    OMATCH_END ();
 
     return 0;
 }
@@ -2539,72 +2543,6 @@ void pc_touch_all_relevant_npcs(dumb_ptr<map_session_data> sd)
         sd->areanpc_id = BlockId();
 }
 
-/*==========================================
- *
- *------------------------------------------
- */
-int pc_movepos(dumb_ptr<map_session_data> sd, int dst_x, int dst_y)
-{
-    int moveblock;
-    int dx, dy;
-
-    struct walkpath_data wpd;
-
-    nullpo_retz(sd);
-
-    if (path_search(&wpd, sd->bl_m, sd->bl_x, sd->bl_y, dst_x, dst_y, 0))
-        return 1;
-
-    sd->dir = sd->head_dir = map_calc_dir(sd, dst_x, dst_y);
-
-    dx = dst_x - sd->bl_x;
-    dy = dst_y - sd->bl_y;
-
-    moveblock = (sd->bl_x / BLOCK_SIZE != dst_x / BLOCK_SIZE
-                 || sd->bl_y / BLOCK_SIZE != dst_y / BLOCK_SIZE);
-
-    map_foreachinmovearea(std::bind(clif_pcoutsight, ph::_1, sd),
-            sd->bl_m,
-            sd->bl_x - AREA_SIZE, sd->bl_y - AREA_SIZE,
-            sd->bl_x + AREA_SIZE, sd->bl_y + AREA_SIZE,
-            dx, dy,
-            BL::NUL);
-
-    if (moveblock)
-        map_delblock(sd);
-    sd->bl_x = dst_x;
-    sd->bl_y = dst_y;
-    if (moveblock)
-        map_addblock(sd);
-
-    map_foreachinmovearea(std::bind(clif_pcinsight, ph::_1, sd),
-            sd->bl_m,
-            sd->bl_x - AREA_SIZE, sd->bl_y - AREA_SIZE,
-            sd->bl_x + AREA_SIZE, sd->bl_y + AREA_SIZE,
-            -dx, -dy,
-            BL::NUL);
-
-    if (sd->status.party_id)
-    {                           // パーティのＨＰ情報通知検査
-        Option<PartyPair> p = party_search(sd->status.party_id);
-        if (p.is_some())
-        {
-            int flag = 0;
-            map_foreachinmovearea(std::bind(party_send_hp_check, ph::_1, sd->status.party_id, &flag),
-                    sd->bl_m,
-                    sd->bl_x - AREA_SIZE, sd->bl_y - AREA_SIZE,
-                    sd->bl_x + AREA_SIZE, sd->bl_y + AREA_SIZE,
-                    -dx, -dy,
-                    BL::PC);
-            if (flag)
-                sd->party_hp = -1;
-        }
-    }
-
-    pc_touch_all_relevant_npcs(sd);
-    return 0;
-}
-
 //
 // 武器戦闘
 //
@@ -2732,7 +2670,7 @@ void pc_attack_timer(TimerData *, tick_t tick, BlockId id)
                 sd->attackabletime = tick + (sd->aspd * 2);
             }
             if (sd->attackabletime <= tick)
-                sd->attackabletime = tick + static_cast<interval_t>(battle_config.max_aspd) * 2;
+                sd->attackabletime = tick + battle_config.max_aspd * 2;
         }
     }
 
@@ -3155,94 +3093,6 @@ int pc_skillup(dumb_ptr<map_session_data> sd, SkillID skill_num)
 }
 
 /*==========================================
- * /resetlvl
- *------------------------------------------
- */
-int pc_resetlvl(dumb_ptr<map_session_data> sd, int type)
-{
-    nullpo_retz(sd);
-
-    for (SkillID i : erange(SkillID(1), MAX_SKILL))
-    {
-        sd->status.skill[i].lv = 0;
-    }
-
-    if (type == 1)
-    {
-        sd->status.skill_point = 0;
-        sd->status.base_level = 1;
-        sd->status.job_level = 1;
-        sd->status.base_exp = 0;
-        sd->status.job_exp = 0;
-        sd->status.option = Opt0::ZERO;
-
-        for (ATTR attr : ATTRs)
-            sd->status.attrs[attr] = 1;
-    }
-
-    if (type == 2)
-    {
-        sd->status.skill_point = 0;
-        sd->status.base_level = 1;
-        sd->status.job_level = 1;
-        sd->status.base_exp = 0;
-        sd->status.job_exp = 0;
-    }
-    if (type == 3)
-    {
-        sd->status.base_level = 1;
-        sd->status.base_exp = 0;
-    }
-    if (type == 4)
-    {
-        sd->status.job_level = 1;
-        sd->status.job_exp = 0;
-    }
-
-    clif_updatestatus(sd, SP::STATUSPOINT);
-    clif_updatestatus(sd, SP::STR);
-    clif_updatestatus(sd, SP::AGI);
-    clif_updatestatus(sd, SP::VIT);
-    clif_updatestatus(sd, SP::INT);
-    clif_updatestatus(sd, SP::DEX);
-    clif_updatestatus(sd, SP::LUK);
-    clif_updatestatus(sd, SP::BASELEVEL);
-    clif_updatestatus(sd, SP::JOBLEVEL);
-    clif_updatestatus(sd, SP::STATUSPOINT);
-    clif_updatestatus(sd, SP::NEXTBASEEXP);
-    clif_updatestatus(sd, SP::NEXTJOBEXP);
-    clif_updatestatus(sd, SP::SKILLPOINT);
-
-    clif_updatestatus(sd, SP::USTR);    // Updates needed stat points - Valaris
-    clif_updatestatus(sd, SP::UAGI);
-    clif_updatestatus(sd, SP::UVIT);
-    clif_updatestatus(sd, SP::UINT);
-    clif_updatestatus(sd, SP::UDEX);
-    clif_updatestatus(sd, SP::ULUK);    // End Addition
-
-    for (EQUIP i : EQUIPs)
-    {
-        // unequip items that can't be equipped by base 1 [Valaris]
-        IOff0 *idx = &sd->equip_index_maybe[i];
-        if ((*idx).ok())
-        {
-            if (!pc_isequip(sd, *idx))
-            {
-                pc_unequipitem(sd, *idx, CalcStatus::LATER);
-                *idx = IOff0::from(-1);
-            }
-        }
-    }
-
-    clif_skillinfoblock(sd);
-    pc_calcstatus(sd, 0);
-
-    MAP_LOG_STATS(sd, "STATRESET"_fmt);
-
-    return 0;
-}
-
-/*==========================================
  * /resetstate
  *------------------------------------------
  */
@@ -3344,8 +3194,11 @@ int pc_damage(dumb_ptr<block_list> src, dumb_ptr<map_session_data> sd,
         if (sd->status.party_id)
         {                       // on-the-fly party hp updates [Valaris]
             Option<PartyPair> p_ = party_search(sd->status.party_id);
-            if OPTION_IS_SOME(p, p_)
+            OMATCH_BEGIN_SOME (p, p_)
+            {
                 clif_party_hp(p, sd);
+            }
+            OMATCH_END ();
         }                       // end addition [Valaris]
 
         return 0;
@@ -3712,8 +3565,11 @@ int pc_heal(dumb_ptr<map_session_data> sd, int hp, int sp)
     if (sd->status.party_id)
     {                           // on-the-fly party hp updates [Valaris]
         Option<PartyPair> p_ = party_search(sd->status.party_id);
-        if OPTION_IS_SOME(p, p_)
+        OMATCH_BEGIN_SOME (p, p_)
+        {
             clif_party_hp(p, sd);
+        }
+        OMATCH_END ();
     }                           // end addition [Valaris]
 
     return hp + sp;
@@ -3947,21 +3803,6 @@ int pc_changelook(dumb_ptr<map_session_data> sd, LOOK type, int val)
             break;
     }
     clif_changelook(sd, type, val);
-
-    return 0;
-}
-
-/*==========================================
- * 付属品(鷹,ペコ,カート)設定
- *------------------------------------------
- */
-int pc_setoption(dumb_ptr<map_session_data> sd, Opt0 type)
-{
-    nullpo_retz(sd);
-
-    sd->status.option = type;
-    clif_changeoption(sd);
-    pc_calcstatus(sd, 0);
 
     return 0;
 }
@@ -4378,7 +4219,7 @@ int pc_equipitem(dumb_ptr<map_session_data> sd, IOff0 n, EPOS)
     ItemNameId view_i;
     ItemLook view_l = ItemLook::NONE;
     // TODO: This is ugly.
-    if OPTION_IS_SOME(sdidn, sd->inventory_data[n])
+    OMATCH_BEGIN_SOME (sdidn, sd->inventory_data[n])
     {
         bool look_not_weapon = sdidn->look == ItemLook::NONE;
         bool equip_is_weapon = bool(sd->status.inventory[n].equip & EPOS::WEAPON);
@@ -4389,6 +4230,7 @@ int pc_equipitem(dumb_ptr<map_session_data> sd, IOff0 n, EPOS)
         else
             view_l = sdidn->look;
     }
+    OMATCH_END ();
 
     if (bool(sd->status.inventory[n].equip & EPOS::WEAPON))
     {
@@ -4398,23 +4240,27 @@ int pc_equipitem(dumb_ptr<map_session_data> sd, IOff0 n, EPOS)
     }
     if (bool(sd->status.inventory[n].equip & EPOS::SHIELD))
     {
-        if OPTION_IS_SOME(sdidn, sd->inventory_data[n])
+        OMATCH_BEGIN (sd->inventory_data[n])
         {
-            if (sdidn->type == ItemType::WEAPON)
+            OMATCH_CASE_SOME (sdidn)
+            {
+                if (sdidn->type == ItemType::WEAPON)
+                {
+                    sd->status.shield = ItemNameId();
+                    if (sd->status.inventory[n].equip == EPOS::SHIELD)
+                        assert(0 && "unreachable - offhand weapons are not supported");
+                }
+                else if (sdidn->type == ItemType::ARMOR)
+                {
+                    sd->status.shield = view_i;
+                }
+            }
+            OMATCH_CASE_NONE ()
             {
                 sd->status.shield = ItemNameId();
-                if (sd->status.inventory[n].equip == EPOS::SHIELD)
-                    assert(0 && "unreachable - offhand weapons are not supported");
-            }
-            else if (sdidn->type == ItemType::ARMOR)
-            {
-                sd->status.shield = view_i;
             }
         }
-        else
-        {
-            sd->status.shield = ItemNameId();
-        }
+        OMATCH_END ();
         pc_calcweapontype(sd);
         clif_changelook(sd, LOOK::SHIELD, unwrap<ItemNameId>(sd->status.shield));
     }
@@ -4716,15 +4562,12 @@ int pc_divorce(dumb_ptr<map_session_data> sd)
         }
         p_sd->status.partner_id = CharId();
         sd->status.partner_id = CharId();
-
-        if (sd->npc_flags.divorce)
-        {
-            sd->npc_flags.divorce = 0;
-            map_scriptcont(sd, sd->npc_id);
-        }
     }
     else
+    {
+        sd->status.partner_id = CharId();
         chrif_send_divorce(sd->status_key.char_id);
+    }
 
     return 0;
 }
@@ -4757,10 +4600,6 @@ dumb_ptr<map_session_data> pc_get_partner(dumb_ptr<map_session_data> sd)
  * SP回復量計算
  *------------------------------------------
  */
-static
-tick_t natural_heal_tick, natural_heal_prev_tick;
-static
-interval_t natural_heal_diff_tick;
 
 static
 interval_t pc_spheal(dumb_ptr<map_session_data> sd)
@@ -4818,12 +4657,12 @@ int pc_natural_heal_hp(dumb_ptr<map_session_data> sd)
         return 0;
     }
 
-    if (sd->hp_sub >= static_cast<interval_t>(battle_config.natural_healhp_interval))
+    if (sd->hp_sub >= battle_config.natural_healhp_interval)
     {
         bonus = sd->nhealhp;
-        while (sd->hp_sub >= static_cast<interval_t>(battle_config.natural_healhp_interval))
+        while (sd->hp_sub >= battle_config.natural_healhp_interval)
         {
-            sd->hp_sub -= static_cast<interval_t>(battle_config.natural_healhp_interval);
+            sd->hp_sub -= battle_config.natural_healhp_interval;
             if (sd->status.hp + bonus <= sd->status.max_hp)
                 sd->status.hp += bonus;
             else
@@ -4864,12 +4703,12 @@ int pc_natural_heal_sp(dumb_ptr<map_session_data> sd)
     else
         sd->inchealsptick = interval_t::zero();
 
-    if (sd->sp_sub >= static_cast<interval_t>(battle_config.natural_healsp_interval))
+    if (sd->sp_sub >= battle_config.natural_healsp_interval)
     {
         bonus = sd->nhealsp;
-        while (sd->sp_sub >= static_cast<interval_t>(battle_config.natural_healsp_interval))
+        while (sd->sp_sub >= battle_config.natural_healsp_interval)
         {
-            sd->sp_sub -= static_cast<interval_t>(battle_config.natural_healsp_interval);
+            sd->sp_sub -= battle_config.natural_healsp_interval;
             if (sd->status.sp + bonus <= sd->status.max_sp)
                 sd->status.sp += bonus;
             else
@@ -5005,8 +4844,6 @@ void pc_setsavepoint(dumb_ptr<map_session_data> sd, MapName mapname, int x, int 
  *------------------------------------------
  */
 static
-int last_save_fd, save_flag;
-static
 void pc_autosave_sub(dumb_ptr<map_session_data> sd)
 {
     nullpo_retv(sd);
@@ -5033,7 +4870,7 @@ void pc_autosave(TimerData *, tick_t)
     if (save_flag == 0)
         last_save_fd = -1;
 
-    interval_t interval = autosave_time / (clif_countusers() + 1);
+    interval_t interval = map_conf.autosave_time / (clif_countusers() + 1);
     if (interval <= interval_t::zero())
         interval = 1_ms;
     Timer(gettick() + interval,
@@ -5086,7 +4923,7 @@ void do_init_pc(void)
             pc_natural_heal,
             NATURAL_HEAL_INTERVAL
     ).detach();
-    Timer(gettick() + autosave_time,
+    Timer(gettick() + map_conf.autosave_time,
             pc_autosave
     ).detach();
 }
@@ -5138,4 +4975,5 @@ int pc_logout(dumb_ptr<map_session_data> sd) // [fate] Player logs out
     MAP_LOG_STATS(sd, "LOGOUT"_fmt);
     return 0;
 }
+} // namespace map
 } // namespace tmwa

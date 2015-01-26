@@ -25,7 +25,9 @@
 #include "../io/cxxstdio.hpp"
 
 #include "battle.hpp"
+#include "battle_conf.hpp"
 #include "clif.hpp"
+#include "globals.hpp"
 #include "itemdb.hpp"
 #include "map.hpp"
 #include "npc.hpp"
@@ -36,6 +38,8 @@
 
 
 namespace tmwa
+{
+namespace map
 {
 /*==========================================
  * 取引要請を相手に送る
@@ -174,7 +178,7 @@ void trade_tradeadditem(dumb_ptr<map_session_data> sd, IOff2 index, int amount)
                             sd->status.inventory[index.unshift()].nameid)
                             continue;
 
-                        if OPTION_IS_SOME(id, target_sd->inventory_data[i])
+                        OMATCH_BEGIN_SOME (id, target_sd->inventory_data[i])
                         {
                             if (id->type != ItemType::WEAPON
                                 && id->type != ItemType::ARMOR
@@ -182,9 +186,12 @@ void trade_tradeadditem(dumb_ptr<map_session_data> sd, IOff2 index, int amount)
                                 && id->type != ItemType::_8)
                             {
                                 free_++;
-                                break;
+                                goto break_outer1;
                             }
                         }
+                        OMATCH_END ();
+                    break_outer1:
+                        break;
                     }
 
                     if (target_sd->weight + trade_weight >
@@ -231,7 +238,7 @@ void trade_tradeadditem(dumb_ptr<map_session_data> sd, IOff2 index, int amount)
                             sd->status.
                             inventory[sd->deal_item_index[trade_i].unshift()].nameid)
                             continue;
-                        if OPTION_IS_SOME(id, target_sd->inventory_data[i])
+                        OMATCH_BEGIN_SOME (id, target_sd->inventory_data[i])
                         {
                             if (id->type != ItemType::WEAPON
                                 && id->type != ItemType::ARMOR
@@ -239,9 +246,12 @@ void trade_tradeadditem(dumb_ptr<map_session_data> sd, IOff2 index, int amount)
                                 && id->type != ItemType::_8)
                             {
                                 free_++;
-                                break;
+                                goto break_outer2;
                             }
                         }
+                        OMATCH_END ();
+                    break_outer2:
+                        break;
                     }
                 }
                 // used a slot, but might be cancelled out by stackable checks above
@@ -467,4 +477,5 @@ void trade_verifyzeny(dumb_ptr<map_session_data> sd)
         }
     }
 }
+} // namespace map
 } // namespace tmwa

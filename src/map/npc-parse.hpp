@@ -25,7 +25,9 @@
 
 namespace tmwa
 {
-int npc_parse_warp(XString w1, XString, NpcName w3, XString w4);
+namespace map
+{
+bool npc_load_warp(ast::npc::Warp& warp);
 
 /**
  * Spawns and installs a talk-only NPC
@@ -38,4 +40,5 @@ dumb_ptr<npc_data> npc_spawn_text(Borrowed<map_local> m, int x, int y,
 void npc_addsrcfile(AString name);
 void npc_delsrcfile(XString name);
 bool do_init_npc(void);
+} // namespace map
 } // namespace tmwa

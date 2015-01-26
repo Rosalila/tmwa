@@ -36,6 +36,9 @@
 
 #include "../sexpr/parser.hpp"
 
+#include "../ast/script.hpp"
+
+#include "globals.hpp"
 #include "itemdb.hpp"
 #include "magic-expr.hpp"
 #include "magic-interpreter.hpp"
@@ -48,15 +51,12 @@
 
 namespace tmwa
 {
+namespace map
+{
 namespace magic
 {
 namespace magic_v2
 {
-    static
-    std::map<RString, proc_t> procs;
-    static
-    std::map<RString, val_t> const_defm;
-
     static
     size_t intern_id(ZString id_name)
     {
@@ -137,14 +137,15 @@ namespace magic_v2
 
         /* For FOR and FOREACH, we use special stack handlers and thus don't have to set
          * the continuation.  It's only IF that we need to handle in this fashion. */
-        MATCH (*src)
+        MATCH_BEGIN (*src)
         {
-            CASE (EffectIf&, e_if)
+            MATCH_CASE (EffectIf&, e_if)
             {
                 set_effect_continuation(e_if.true_branch, continuation);
                 set_effect_continuation(e_if.false_branch, continuation);
             }
         }
+        MATCH_END ();
 
         if (src->next)
             set_effect_continuation(src->next, continuation);
@@ -175,13 +176,14 @@ namespace magic_v2
         }
 
         /* If the premise is a disjunction, b is the continuation of _all_ branches */
-        MATCH (*a)
+        MATCH_BEGIN (*a)
         {
-            CASE(const GuardChoice&, s)
+            MATCH_CASE (const GuardChoice&, s)
             {
                 spellguard_implication(s.s_alt, b);
             }
         }
+        MATCH_END ();
 
         if (a->next)
             spellguard_implication(a->next, b);
@@ -785,7 +787,20 @@ namespace magic_v2
             if (s._list[1]._type != sexpr::STRING)
                 return fail(s._list[1], "not string"_s);
             ZString body = s._list[1]._str;
-            std::unique_ptr<const ScriptBuffer> script = parse_script(body, s._list[1]._span.begin.line, true);
+            auto begin = s._list[1]._span.begin;
+            io::LineCharReader lr(io::from_string, begin.filename, body, begin.line, begin.column);
+            ast::script::ScriptOptions opt;
+            opt.implicit_start = true;
+            opt.implicit_end = true;
+            opt.no_event = true;
+            auto code_res = ast::script::parse_script_body(lr, opt);
+            if (code_res.get_failure())
+            {
+                PRINTF("%s\n"_fmt, code_res.get_failure());
+            }
+            auto code = TRY_UNWRAP(code_res.get_success(),
+                    return fail(s._list[1], "script does not compile"_s));
+            std::unique_ptr<const ScriptBuffer> script = compile_script(STRPRINTF("script magic %s:%d"_fmt, begin.filename, begin.line), code, true);
             if (!script)
                 return fail(s._list[1], "script does not compile"_s);
             EffectScript e;
@@ -1276,4 +1291,5 @@ bool load_magic_file_v2(ZString filename)
     return rv;
 }
 } // namespace magic
+} // namespace map
 } // namespace tmwa

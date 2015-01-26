@@ -52,6 +52,8 @@
 
 namespace tmwa
 {
+namespace map
+{
 constexpr int MAX_NPC_PER_MAP = 512;
 constexpr int BLOCK_SIZE = 8;
 #define AREA_SIZE battle_config.area_size
@@ -59,12 +61,11 @@ constexpr std::chrono::seconds LIFETIME_FLOORITEM = 1_min;
 constexpr int MAX_SKILL_LEVEL = 100;
 constexpr int MAX_EVENTTIMER = 32;
 constexpr interval_t NATURAL_HEAL_INTERVAL = 500_ms;
-constexpr BlockId MAX_FLOORITEM = wrap<BlockId>(500000_u32);
 constexpr int MAX_LEVEL = 255;
 constexpr int MAX_WALKPATH = 48;
 constexpr int MAX_DROP_PER_MAP = 48;
 
-constexpr interval_t DEFAULT_AUTOSAVE_INTERVAL = 1_min;
+constexpr std::chrono::seconds DEFAULT_AUTOSAVE_INTERVAL = 1_min;
 
 extern map_local undefined_gat;
 
@@ -194,7 +195,6 @@ struct map_session_data : block_list, SessionData
     struct
     {
         unsigned storage:1;
-        unsigned divorce:1;
     } npc_flags;
 
     Timer attacktimer;
@@ -262,7 +262,6 @@ struct map_session_data : block_list, SessionData
     Map<SIR, RString> regstrm;
 
     earray<struct status_change, StatusChange, StatusChange::MAX_STATUSCHANGE> sc_data;
-    short sc_count;
 
     AccountId trade_partner;
     Array<IOff2, TRADE_MAX> deal_item_index;
@@ -288,14 +287,14 @@ struct map_session_data : block_list, SessionData
         unsigned in_progress:1;
     } auto_ban_info;
 
-    TimeT chat_reset_due;
-    TimeT chat_repeat_reset_due;
+    tick_t chat_reset_due;
+    tick_t chat_repeat_reset_due;
     int chat_lines_in;
     int chat_total_repeats;
     RString chat_lastmsg;
 
     tick_t flood_rates[0x220];
-    TimeT packet_flood_reset_due;
+    tick_t packet_flood_reset_due;
     int packet_flood_in;
 
     IP4Address get_ip()
@@ -359,6 +358,7 @@ public:
         std::unique_ptr<const ScriptBuffer> script;
         // Diameter.
         short xs, ys;
+        bool event_needs_map;
 
         // Whether the timer advances if not beyond end.
         bool timer_active;
@@ -454,7 +454,6 @@ struct mob_data : block_list
     std::vector<Item> lootitemv;
 
     earray<struct status_change, StatusChange, StatusChange::MAX_STATUSCHANGE> sc_data;
-    short sc_count;
     Opt1 opt1;
     Opt2 opt2;
     Opt3 opt3;
@@ -494,8 +493,6 @@ struct map_abstract
     map_abstract(map_abstract&&) = default;
     virtual ~map_abstract() {}
 };
-extern
-UPMap<MapName, map_abstract> maps_db;
 
 struct map_local : map_abstract
 {
@@ -532,12 +529,7 @@ struct flooritem_data : block_list
     Item item_data;
 };
 
-extern interval_t autosave_time;
-extern int save_settings;
-
-extern AString motd_txt;
-
-extern CharName wisp_server_name;
+extern const CharName WISP_SERVER_NAME;
 
 // 鯖全体情報
 void map_setusers(int);
@@ -609,8 +601,6 @@ BlockId map_addflooritem(Item *, int,
         dumb_ptr<map_session_data>);
 
 // キャラid＝＞キャラ名 変換関連
-extern
-DMap<BlockId, dumb_ptr<block_list>> id_db;
 void map_addchariddb(CharId charid, CharName name);
 CharName map_charid2nick(CharId);
 
@@ -700,4 +690,14 @@ inline dumb_ptr<npc_data_script> npc_data::is_script() { return npc_subtype == N
 inline dumb_ptr<npc_data_shop> npc_data::is_shop() { return npc_subtype == NpcSubtype::SHOP ? as_shop() : nullptr ; }
 inline dumb_ptr<npc_data_warp> npc_data::is_warp() { return npc_subtype == NpcSubtype::WARP ? as_warp() : nullptr ; }
 inline dumb_ptr<npc_data_message> npc_data::is_message() { return npc_subtype == NpcSubtype::MESSAGE ? as_message() : nullptr ; }
+
+void map_addmap(MapName mapname);
+void map_delmap(MapName mapname);
+
+struct charid2nick
+{
+    CharName nick;
+    int req_id;
+};
+} // namespace map
 } // namespace tmwa

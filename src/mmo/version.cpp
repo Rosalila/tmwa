@@ -66,16 +66,36 @@ Version CURRENT_MAP_SERVER_VERSION =
 
 LString CURRENT_VERSION_STRING = VERSION_STRING;
 
-bool extract(XString str, Version *vers)
+bool impl_extract(XString str, Version *vers)
 {
     *vers = {};
-    // TODO should I try to extract dev and vend also?
-    // It would've been useful during the magic migration.
+    // versions look like:
+    //   1.2.3 (release)
+    //   1.2.3+5 (vendor patches)
+    //   1.2.3-4 (dev patches)
+    //   1.2.3-4+5 (dev patches + vendor patches)
+    XString a, b;
+    if (extract(str, record<'+'>(&a, &b)))
+    {
+        if (!extract(b, &vers->vend))
+        {
+            return false;
+        }
+        str = a;
+    }
+    if (extract(str, record<'-'>(&a, &b)))
+    {
+        if (!extract(b, &vers->devel))
+        {
+            return false;
+        }
+        str = a;
+    }
     return extract(str, record<'.'>(&vers->major, &vers->minor, &vers->patch));
 }
 
 LString VERSION_INFO_HEADER = "This server code consists of Free Software under GPL3&AGPL3"_s;
 LString VERSION_INFO_COMMIT = "This is commit " VERSION_HASH ", also known as " VERSION_FULL ""_s;
 LString VERSION_INFO_NUMBER = "The version is " VERSION_STRING ""_s;
-LString VERSION_INFO_URL = "For source, see " VENDOR_SOURCE ""_s;
+LString VERSION_INFO_URL = "For source, see [@@" VENDOR_SOURCE "|" VENDOR_SOURCE "@@]"_s;
 } // namespace tmwa

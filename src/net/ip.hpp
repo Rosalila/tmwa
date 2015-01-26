@@ -25,6 +25,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <vector>
+
 
 namespace tmwa
 {
@@ -158,7 +160,7 @@ IP4Address IP4_BROADCAST({255, 255, 255, 255});
 VString<15> convert_for_printf(IP4Address a);
 VString<31> convert_for_printf(IP4Mask m);
 
-bool extract(XString str, IP4Address *iv);
-
-bool extract(XString str, IP4Mask *iv);
+bool impl_extract(XString str, IP4Address *iv);
+bool impl_extract(XString str, IP4Mask *iv);
+bool impl_extract(XString str, std::vector<IP4Mask> *iv);
 } // namespace tmwa

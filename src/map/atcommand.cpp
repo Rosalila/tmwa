@@ -59,12 +59,17 @@
 #include "../high/mmo.hpp"
 #include "../high/utils.hpp"
 
+#include "../ast/npc.hpp"
+
 #include "battle.hpp"
+#include "battle_conf.hpp"
 #include "chrif.hpp"
 #include "clif.hpp"
+#include "globals.hpp"
 #include "intif.hpp"
 #include "itemdb.hpp"
 #include "map.hpp"
+#include "map_conf.hpp"
 #include "mob.hpp"
 #include "npc.hpp"
 #include "npc-parse.hpp"
@@ -80,6 +85,8 @@
 //#include "../poison.hpp"
 
 namespace tmwa
+{
+namespace map
 {
 enum class ATCE
 {
@@ -216,11 +223,9 @@ void log_atcommand(dumb_ptr<map_session_data> sd, ZString cmd)
             cmd);
 }
 
-AString gm_log;
-
 io::AppendFile *get_gm_log()
 {
-    if (!gm_log)
+    if (!map_conf.gm_log)
         return nullptr;
 
     struct tm ctime = TimeT::now();
@@ -236,7 +241,7 @@ io::AppendFile *get_gm_log()
     last_logfile_nr = logfile_nr;
 
     AString fullname = STRPRINTF("%s.%04d-%02d"_fmt,
-            gm_log, year, month);
+            map_conf.gm_log, year, month);
 
     if (gm_logfile)
         gm_logfile.reset();
@@ -246,7 +251,7 @@ io::AppendFile *get_gm_log()
     if (!gm_logfile)
     {
         perror("GM log file");
-        gm_log = AString();
+        map_conf.gm_log = AString();
     }
     return gm_logfile.get();
 }
@@ -352,44 +357,35 @@ Option<Borrowed<AtCommandInfo>> get_atcommandinfo_byname(XString name)
     return atcommand_info.search(name);
 }
 
-bool atcommand_config_read(ZString cfgName)
+static
+bool atcommand_config(io::Spanned<XString> w1, io::Spanned<ZString> w2)
 {
-    io::ReadFile in(cfgName);
-    if (!in.is_open())
-    {
-        PRINTF("At commands configuration file not found: %s\n"_fmt, cfgName);
-        return false;
-    }
-
     bool rv = true;
-    AString line;
-    while (in.getline(line))
     {
-        if (is_comment(line))
-            continue;
-        XString w1;
-        ZString w2;
-        if (!config_split(line, &w1, &w2))
+        Option<P<AtCommandInfo>> p_ = get_atcommandinfo_byname(w1.data);
+        OMATCH_BEGIN (p_)
         {
-            PRINTF("Bad config line: %s\n"_fmt, line);
-            rv = false;
-            continue;
+            OMATCH_CASE_SOME (p)
+            {
+                p->level = GmLevel::from(static_cast<uint32_t>(atoi(w2.data.c_str())));
+            }
+            OMATCH_CASE_NONE ()
+            {
+                {
+                    w1.span.error("Unknown @command for permission level config."_s);
+                    rv = false;
+                }
+            }
         }
-        Option<P<AtCommandInfo>> p_ = get_atcommandinfo_byname(w1);
-        if OPTION_IS_SOME(p, p_)
-        {
-            p->level = GmLevel::from(static_cast<uint32_t>(atoi(w2.c_str())));
-        }
-        else if (w1 == "import"_s)
-            rv &= atcommand_config_read(w2);
-        else
-        {
-            PRINTF("%s: bad line: %s\n"_fmt, cfgName, line);
-            rv = false;
-        }
+        OMATCH_END ();
     }
 
     return rv;
+}
+
+bool atcommand_config_read(ZString cfgName)
+{
+    return load_config_file(cfgName, atcommand_config);
 }
 
 /// @ command processing functions
@@ -651,14 +647,14 @@ ATCE atcommand_charwarp(Session *s, dumb_ptr<map_session_data> sd,
             {
                 Option<P<map_local>> m = map_mapname2mapid(map_name);
                 if (m.map([](P<map_local> m_){ return m_->flag.get(MapFlag::NOWARPTO); }).copy_or(false)
-                    && !pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level))))
+                    && !pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level))
                 {
                     clif_displaymessage(s,
                             "You are not authorised to warp someone to this map."_s);
                     return ATCE::PERM;
                 }
                 if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
-                    && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+                    && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
                 {
                     clif_displaymessage(s,
                             "You are not authorised to warp this player from its actual map."_s);
@@ -720,14 +716,14 @@ ATCE atcommand_warp(Session *s, dumb_ptr<map_session_data> sd,
     {
         Option<P<map_local>> m = map_mapname2mapid(map_name);
         if (m.map([](P<map_local> m_){ return m_->flag.get(MapFlag::NOWARPTO); }).copy_or(false)
-            && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+            && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
         {
             clif_displaymessage(s,
                     "You are not authorised to warp you to this map."_s);
             return ATCE::PERM;
         }
         if (sd->bl_m->flag.get(MapFlag::NOWARP)
-            && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+            && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
         {
             clif_displaymessage(s,
                     "You are not authorised to warp you from your actual map."_s);
@@ -795,14 +791,14 @@ ATCE atcommand_goto(Session *s, dumb_ptr<map_session_data> sd,
     if (pl_sd != nullptr)
     {
         if (pl_sd->bl_m->flag.get(MapFlag::NOWARPTO)
-            && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+            && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
         {
             clif_displaymessage(s,
                     "You are not authorised to warp you to the map of this player."_s);
             return ATCE::PERM;
         }
         if (sd->bl_m->flag.get(MapFlag::NOWARP)
-            && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+            && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
         {
             clif_displaymessage(s,
                     "You are not authorised to warp you from your actual map."_s);
@@ -836,14 +832,14 @@ ATCE atcommand_jump(Session *s, dumb_ptr<map_session_data> sd,
     if (x > 0 && x < 800 && y > 0 && y < 800)
     {
         if (sd->bl_m->flag.get(MapFlag::NOWARPTO)
-            && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+            && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
         {
             clif_displaymessage(s,
                     "You are not authorised to warp you to your actual map."_s);
             return ATCE::PERM;
         }
         if (sd->bl_m->flag.get(MapFlag::NOWARP)
-            && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+            && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
         {
             clif_displaymessage(s,
                     "You are not authorised to warp you from your actual map."_s);
@@ -1188,14 +1184,14 @@ ATCE atcommand_load(Session *s, dumb_ptr<map_session_data> sd,
 {
     Option<P<map_local>> m = map_mapname2mapid(sd->status.save_point.map_);
     if (m.map([](P<map_local> m_){ return m_->flag.get(MapFlag::NOWARPTO); }).copy_or(false)
-        && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+        && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
     {
         clif_displaymessage(s,
                              "You are not authorised to warp you to your save map."_s);
         return ATCE::PERM;
     }
     if (sd->bl_m->flag.get(MapFlag::NOWARP)
-        && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+        && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
     {
         clif_displaymessage(s,
                              "You are not authorised to warp you from your actual map."_s);
@@ -1366,8 +1362,8 @@ ATCE atcommand_alive(Session *s, dumb_ptr<map_session_data> sd,
     sd->status.hp = sd->status.max_hp;
     sd->status.sp = sd->status.max_sp;
     pc_setstand(sd);
-    if (static_cast<interval_t>(battle_config.player_invincible_time) > interval_t::zero())
-        pc_setinvincibletimer(sd, static_cast<interval_t>(battle_config.player_invincible_time));
+    if (battle_config.player_invincible_time > interval_t::zero())
+        pc_setinvincibletimer(sd, battle_config.player_invincible_time);
     clif_updatestatus(sd, SP::HP);
     clif_updatestatus(sd, SP::SP);
     clif_resurrection(sd, 1);
@@ -2191,14 +2187,14 @@ ATCE atcommand_recall(Session *s, dumb_ptr<map_session_data> sd,
         {
             // you can recall only lower or same level
             if (sd->bl_m->flag.get(MapFlag::NOWARPTO)
-                && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+                && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
             {
                 clif_displaymessage(s,
                         "You are not authorised to warp somenone to your actual map."_s);
                 return ATCE::PERM;
             }
             if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
-                && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+                && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
             {
                 clif_displaymessage(s,
                         "You are not authorised to warp this player from its actual map."_s);
@@ -2237,8 +2233,8 @@ ATCE atcommand_revive(Session *s, dumb_ptr<map_session_data> sd,
     {
         pl_sd->status.hp = pl_sd->status.max_hp;
         pc_setstand(pl_sd);
-        if (static_cast<interval_t>(battle_config.player_invincible_time) > interval_t::zero())
-            pc_setinvincibletimer(sd, static_cast<interval_t>(battle_config.player_invincible_time));
+        if (battle_config.player_invincible_time > interval_t::zero())
+            pc_setinvincibletimer(sd, battle_config.player_invincible_time);
         clif_updatestatus(pl_sd, SP::HP);
         clif_updatestatus(pl_sd, SP::SP);
         clif_resurrection(pl_sd, 1);
@@ -2521,7 +2517,7 @@ ATCE atcommand_character_save(Session *s, dumb_ptr<map_session_data> sd,
 
             {
                 if (m->flag.get(MapFlag::NOWARPTO)
-                    && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+                    && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
                 {
                     clif_displaymessage(s,
                             "You are not authorised to set this map as a save map."_s);
@@ -3459,7 +3455,7 @@ ATCE atcommand_recallall(Session *s, dumb_ptr<map_session_data> sd,
     int count;
 
     if (sd->bl_m->flag.get(MapFlag::NOWARPTO)
-        && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+        && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
     {
         clif_displaymessage(s,
                 "You are not authorised to warp somenone to your actual map."_s);
@@ -3480,7 +3476,7 @@ ATCE atcommand_recallall(Session *s, dumb_ptr<map_session_data> sd,
         {
             // you can recall only lower or same level
             if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
-                && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+                && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
                 count++;
             else
                 pc_setpos(pl_sd, sd->mapname_, sd->bl_x, sd->bl_y, BeingRemoveWhy::QUIT);
@@ -3510,7 +3506,7 @@ ATCE atcommand_partyrecall(Session *s, dumb_ptr<map_session_data> sd,
         return ATCE::USAGE;
 
     if (sd->bl_m->flag.get(MapFlag::NOWARPTO)
-        && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+        && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
     {
         clif_displaymessage(s,
                 "You are not authorised to warp somenone to your actual map."_s);
@@ -3521,41 +3517,45 @@ ATCE atcommand_partyrecall(Session *s, dumb_ptr<map_session_data> sd,
     Option<PartyPair> p_ = party_searchname(party_name);
     if (p_.is_none())
         p_ = party_search(wrap<PartyId>(static_cast<uint32_t>(atoi(message.c_str()))));
-    if OPTION_IS_SOME(p, p_)
+    OMATCH_BEGIN (p_)
     {
-        count = 0;
-        for (io::FD i : iter_fds())
+        OMATCH_CASE_SOME (p)
         {
-            Session *s2 = get_session(i);
-            if (!s2)
-                continue;
-            dumb_ptr<map_session_data> pl_sd = dumb_ptr<map_session_data>(static_cast<map_session_data *>(s2->session_data.get()));
-            if (pl_sd && pl_sd->state.auth
-                && sd->status_key.account_id != pl_sd->status_key.account_id
-                && pl_sd->status.party_id == p.party_id)
+            count = 0;
+            for (io::FD i : iter_fds())
             {
-                if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
-                    && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
-                    count++;
-                else
-                    pc_setpos(pl_sd, sd->mapname_, sd->bl_x, sd->bl_y, BeingRemoveWhy::QUIT);
+                Session *s2 = get_session(i);
+                if (!s2)
+                    continue;
+                dumb_ptr<map_session_data> pl_sd = dumb_ptr<map_session_data>(static_cast<map_session_data *>(s2->session_data.get()));
+                if (pl_sd && pl_sd->state.auth
+                    && sd->status_key.account_id != pl_sd->status_key.account_id
+                    && pl_sd->status.party_id == p.party_id)
+                {
+                    if (pl_sd->bl_m->flag.get(MapFlag::NOWARP)
+                        && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
+                        count++;
+                    else
+                        pc_setpos(pl_sd, sd->mapname_, sd->bl_x, sd->bl_y, BeingRemoveWhy::QUIT);
+                }
+            }
+            AString output = STRPRINTF("All online characters of the %s party are near you."_fmt, p->name);
+            clif_displaymessage(s, output);
+            if (count)
+            {
+                output = STRPRINTF(
+                        "Because you are not authorised to warp from some maps, %d player(s) have not been recalled."_fmt,
+                        count);
+                clif_displaymessage(s, output);
             }
         }
-        AString output = STRPRINTF("All online characters of the %s party are near you."_fmt, p->name);
-        clif_displaymessage(s, output);
-        if (count)
+        OMATCH_CASE_NONE ()
         {
-            output = STRPRINTF(
-                    "Because you are not authorised to warp from some maps, %d player(s) have not been recalled."_fmt,
-                    count);
-            clif_displaymessage(s, output);
+            clif_displaymessage(s, "Incorrect name or ID, or no one from the party is online."_s);
+            return ATCE::EXIST;
         }
     }
-    else
-    {
-        clif_displaymessage(s, "Incorrect name or ID, or no one from the party is online."_s);
-        return ATCE::EXIST;
-    }
+    OMATCH_END ();
 
     return ATCE::OKAY;
 }
@@ -3703,26 +3703,30 @@ ATCE atcommand_partyspy(Session *s, dumb_ptr<map_session_data> sd,
     Option<PartyPair> p_ = party_searchname(party_name);
     if (p_.is_none())
         p_ = party_search(wrap<PartyId>(static_cast<uint32_t>(atoi(message.c_str()))));
-    if OPTION_IS_SOME(p, p_)
+    OMATCH_BEGIN (p_)
     {
-        if (sd->partyspy == p.party_id)
+        OMATCH_CASE_SOME (p)
         {
-            sd->partyspy = PartyId();
-            AString output = STRPRINTF("No longer spying on the %s party."_fmt, p->name);
-            clif_displaymessage(s, output);
+            if (sd->partyspy == p.party_id)
+            {
+                sd->partyspy = PartyId();
+                AString output = STRPRINTF("No longer spying on the %s party."_fmt, p->name);
+                clif_displaymessage(s, output);
+            }
+            else
+            {
+                sd->partyspy = p.party_id;
+                AString output = STRPRINTF("Spying on the %s party."_fmt, p->name);
+                clif_displaymessage(s, output);
+            }
         }
-        else
+        OMATCH_CASE_NONE ()
         {
-            sd->partyspy = p.party_id;
-            AString output = STRPRINTF("Spying on the %s party."_fmt, p->name);
-            clif_displaymessage(s, output);
+            clif_displaymessage(s, "Incorrect name or ID, or no one from the party is online."_s);
+            return ATCE::EXIST;
         }
     }
-    else
-    {
-        clif_displaymessage(s, "Incorrect name or ID, or no one from the party is online."_s);
-        return ATCE::EXIST;
-    }
+    OMATCH_END ();
 
     return ATCE::OKAY;
 }
@@ -4077,51 +4081,55 @@ ATCE atcommand_character_storage_list(Session *s, dumb_ptr<map_session_data> sd,
         {
             // you can look items only lower or same level
             Option<P<Storage>> stor_ = account2storage2(pl_sd->status_key.account_id);
-            if OPTION_IS_SOME(stor, stor_)
+            OMATCH_BEGIN (stor_)
             {
-                counter = 0;
-                count = 0;
-                for (SOff0 i : SOff0::iter())
+                OMATCH_CASE_SOME (stor)
                 {
-                    if (!stor->storage_[i].nameid)
-                        continue;
-                    P<struct item_data> item_data = TRY_UNWRAP(itemdb_exists(stor->storage_[i].nameid), continue);
-
+                    counter = 0;
+                    count = 0;
+                    for (SOff0 i : SOff0::iter())
                     {
-                        counter = counter + stor->storage_[i].amount;
-                        count++;
-                        if (count == 1)
+                        if (!stor->storage_[i].nameid)
+                            continue;
+                        P<struct item_data> item_data = TRY_UNWRAP(itemdb_exists(stor->storage_[i].nameid), continue);
+
                         {
-                            AString output = STRPRINTF(
-                                    "------ Storage items list of '%s' ------"_fmt,
-                                    pl_sd->status_key.name);
+                            counter = counter + stor->storage_[i].amount;
+                            count++;
+                            if (count == 1)
+                            {
+                                AString output = STRPRINTF(
+                                        "------ Storage items list of '%s' ------"_fmt,
+                                        pl_sd->status_key.name);
+                                clif_displaymessage(s, output);
+                            }
+                            AString output;
+                            if (true)
+                                output = STRPRINTF("%d %s (%s, id: %d)"_fmt,
+                                        stor->storage_[i].amount,
+                                        item_data->name, item_data->jname,
+                                        stor->storage_[i].nameid);
                             clif_displaymessage(s, output);
                         }
-                        AString output;
-                        if (true)
-                            output = STRPRINTF("%d %s (%s, id: %d)"_fmt,
-                                    stor->storage_[i].amount,
-                                    item_data->name, item_data->jname,
-                                    stor->storage_[i].nameid);
+                    }
+                    if (count == 0)
+                        clif_displaymessage(s,
+                                "No item found in the storage of this player."_s);
+                    else
+                    {
+                        AString output = STRPRINTF(
+                                "%d item(s) found in %d kind(s) of items."_fmt,
+                                counter, count);
                         clif_displaymessage(s, output);
                     }
                 }
-                if (count == 0)
-                    clif_displaymessage(s,
-                            "No item found in the storage of this player."_s);
-                else
+                OMATCH_CASE_NONE ()
                 {
-                    AString output = STRPRINTF(
-                            "%d item(s) found in %d kind(s) of items."_fmt,
-                            counter, count);
-                    clif_displaymessage(s, output);
+                    clif_displaymessage(s, "This player has no storage."_s);
+                    return ATCE::OKAY;
                 }
             }
-            else
-            {
-                clif_displaymessage(s, "This player has no storage."_s);
-                return ATCE::OKAY;
-            }
+            OMATCH_END ();
         }
         else
         {
@@ -4253,13 +4261,21 @@ ATCE atcommand_addwarp(Session *s, dumb_ptr<map_session_data> sd,
     if (!extract(message, record<' '>(&mapname, &x, &y)))
         return ATCE::USAGE;
 
-    AString w1 = STRPRINTF("%s,%d,%d"_fmt, sd->mapname_, sd->bl_x, sd->bl_y);
     AString w3 = STRPRINTF("%s%d%d%d%d"_fmt, mapname, sd->bl_x, sd->bl_y, x, y);
-    AString w4 = STRPRINTF("1,1,%s.gat,%d,%d"_fmt, mapname, x, y);
-
     NpcName w3name = stringish<NpcName>(w3);
-    int ret = npc_parse_warp(w1, "warp"_s, w3name, w4);
-    if (ret)
+
+    ast::npc::Warp warp;
+    warp.m.data = sd->mapname_;
+    warp.x.data = sd->bl_x;
+    warp.y.data = sd->bl_y;
+    warp.name.data = w3name;
+    warp.xs.data = 1+2;
+    warp.ys.data = 1+2;
+    warp.to_m.data = mapname;
+    warp.to_x.data = x;
+    warp.to_y.data = y;
+
+    if (!npc_load_warp(warp))
         // warp failed
         return ATCE::RANGE;
 
@@ -4533,12 +4549,13 @@ ATCE atcommand_adjcmdlvl(Session *s, dumb_ptr<map_session_data>,
 
     Option<P<AtCommandInfo>> it_ = atcommand_info.search(cmd);
     {
-        if OPTION_IS_SOME(it, it_)
+        OMATCH_BEGIN_SOME (it, it_)
         {
             it->level = newlev;
             clif_displaymessage(s, "@command level changed."_s);
             return ATCE::OKAY;
         }
+        OMATCH_END ();
     }
 
     clif_displaymessage(s, "@command not found."_s);
@@ -4764,14 +4781,14 @@ ATCE atcommand_jump_iterate(Session *s, dumb_ptr<map_session_data> sd,
     }
 
     if (pl_sd->bl_m->flag.get(MapFlag::NOWARPTO)
-        && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+        && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
     {
         clif_displaymessage(s,
                 "You are not authorised to warp you to the map of this player."_s);
         return ATCE::PERM;
     }
     if (sd->bl_m->flag.get(MapFlag::NOWARP)
-        && !(pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.any_warp_GM_min_level)))))
+        && !(pc_isGM(sd).satisfies(battle_config.any_warp_GM_min_level)))
     {
         clif_displaymessage(s,
                 "You are not authorised to warp you from your actual map."_s);
@@ -4842,11 +4859,11 @@ ATCE atcommand_skillpool_info(Session *s, dumb_ptr<map_session_data>,
             clif_displaymessage(s, buf);
         }
 
-        buf = STRPRINTF("Learned skills out of %d for %s:"_fmt,
-                skill_pool_skills_size, character);
+        buf = STRPRINTF("Learned skills out of %zu for %s:"_fmt,
+                skill_pool_skills.size(), character);
         clif_displaymessage(s, buf);
 
-        for (i = 0; i < skill_pool_skills_size; ++i)
+        for (i = 0; i < skill_pool_skills.size(); ++i)
         {
             const RString& name = skill_name(skill_pool_skills[i]);
             int lvl = pl_sd->status.skill[skill_pool_skills[i]].lv;
@@ -5454,4 +5471,5 @@ Map<XString, AtCommandInfo> atcommand_info =
         0, atcommand_source,
         "Legal information about source code (must be a level 0 command!)"_s}},
 };
+} // namespace map
 } // namespace tmwa

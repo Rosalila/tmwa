@@ -57,12 +57,15 @@
 
 #include "atcommand.hpp"
 #include "battle.hpp"
+#include "battle_conf.hpp"
 #include "chrif.hpp"
+#include "globals.hpp"
 #include "intif.hpp"
 #include "itemdb.hpp"
 #include "magic.hpp"
 #include "magic-stmt.hpp"
 #include "map.hpp"
+#include "map_conf.hpp"
 #include "npc.hpp"
 #include "party.hpp"
 #include "pc.hpp"
@@ -75,6 +78,8 @@
 
 
 namespace tmwa
+{
+namespace map
 {
 constexpr int EMOTE_IGNORED = 0x0e;
 
@@ -120,11 +125,6 @@ enum class SendWho
 };
 
 static
-IP4Address map_ip;
-static
-int map_port = 5121;
-
-static
 int clif_changelook_towards(dumb_ptr<block_list> bl, LOOK type, int val,
                              dumb_ptr<map_session_data> dstsd);
 static
@@ -150,42 +150,6 @@ void clif_delete(Session *s)
     }
 }
 
-
-/*==========================================
- * map鯖のip設定
- *------------------------------------------
- */
-void clif_setip(IP4Address ip)
-{
-    map_ip = ip;
-}
-
-/*==========================================
- * map鯖のport設定
- *------------------------------------------
- */
-void clif_setport(int port)
-{
-    map_port = port;
-}
-
-/*==========================================
- * map鯖のip読み出し
- *------------------------------------------
- */
-IP4Address clif_getip(void)
-{
-    return map_ip;
-}
-
-/*==========================================
- * map鯖のport読み出し
- *------------------------------------------
- */
-int clif_getport(void)
-{
-    return map_port;
-}
 
 /*==========================================
  *
@@ -401,7 +365,7 @@ int clif_send(const Buffer& buf, dumb_ptr<block_list> bl, SendWho type)
                         p_ = party_search(sd->status.party_id);
                 }
             }
-            if OPTION_IS_SOME(p, p_)
+            OMATCH_BEGIN_SOME (p, p_)
             {
                 for (int i = 0; i < MAX_PARTY; i++)
                 {
@@ -440,6 +404,7 @@ int clif_send(const Buffer& buf, dumb_ptr<block_list> bl, SendWho type)
                     }
                 }
             }
+            OMATCH_END ();
         }
             break;
         case SendWho::SELF:
@@ -618,37 +583,6 @@ int clif_clearchar(dumb_ptr<block_list> bl, BeingRemoveWhy type)
         clif_send(buf, bl,
                    type == BeingRemoveWhy::DEAD ? SendWho::AREA : SendWho::AREA_WOS);
     }
-
-    return 0;
-}
-
-static
-void clif_clearchar_delay_sub(TimerData *, tick_t,
-        dumb_ptr<block_list> bl, BeingRemoveWhy type)
-{
-    clif_clearchar(bl, type);
-    MapBlockLock::freeblock(bl);
-}
-
-int clif_clearchar_delay(tick_t tick,
-        dumb_ptr<block_list> bl, BeingRemoveWhy type)
-{
-    dumb_ptr<block_list> tmpbl;
-    tmpbl.new_();
-
-    // yikes!
-    tmpbl->bl_next = bl->bl_next;
-    tmpbl->bl_prev = bl->bl_prev;
-    tmpbl->bl_id = bl->bl_id;
-    tmpbl->bl_m = bl->bl_m;
-    tmpbl->bl_x = bl->bl_x;
-    tmpbl->bl_y = bl->bl_y;
-    tmpbl->bl_type = bl->bl_type;
-
-    Timer(tick,
-            std::bind(clif_clearchar_delay_sub, ph::_1, ph::_2,
-                tmpbl, type)
-    ).detach();
 
     return 0;
 }
@@ -1262,7 +1196,7 @@ int clif_selllist(dumb_ptr<map_session_data> sd)
     {
         if (!sd->status.inventory[i].nameid)
             continue;
-        if OPTION_IS_SOME(sdidi, sd->inventory_data[i])
+        OMATCH_BEGIN_SOME (sdidi, sd->inventory_data[i])
         {
             int val = sdidi->value_sell;
             if (val < 0)
@@ -1273,6 +1207,7 @@ int clif_selllist(dumb_ptr<map_session_data> sd)
             info.actual_price = val;
             repeat_c7.push_back(info);
         }
+        OMATCH_END ();
     }
     send_packet_repeatonly<0x00c7, 4, 10>(s, repeat_c7);
 
@@ -2684,43 +2619,6 @@ void clif_mobinsight(dumb_ptr<block_list> bl, dumb_ptr<mob_data> md)
 }
 
 /*==========================================
- *
- *------------------------------------------
- */
-int clif_skillinfo(dumb_ptr<map_session_data> sd, SkillID skillid, int type,
-                    int range)
-{
-    nullpo_retz(sd);
-
-    Session *s = sd->sess;
-    if (!sd->status.skill[skillid].lv)
-        return 0;
-    Packet_Fixed<0x0147> fixed_147;
-    fixed_147.info.skill_id = skillid;
-    if (type < 0)
-        fixed_147.info.type_or_inf = skill_get_inf(skillid);
-    else
-        fixed_147.info.type_or_inf = type;
-    fixed_147.info.flags = SkillFlags::ZERO;
-    fixed_147.info.level = sd->status.skill[skillid].lv;
-    fixed_147.info.sp = skill_get_sp(skillid, sd->status.skill[skillid].lv);
-    if (range < 0)
-    {
-        range = skill_get_range(skillid, sd->status.skill[skillid].lv);
-        if (range < 0)
-            range = battle_get_range(sd) - (range + 1);
-        fixed_147.info.range = range;
-    }
-    else
-        fixed_147.info.range = range;
-    fixed_147.info.unused = ""_s;
-    fixed_147.info.can_raise = sd->status.skill[skillid].lv < skill_get_max_raise(skillid);
-    send_fpacket<0x0147, 39>(s, fixed_147);
-
-    return 0;
-}
-
-/*==========================================
  * スキルリストを送信する
  *------------------------------------------
  */
@@ -3201,21 +3099,6 @@ int clif_movetoattack(dumb_ptr<map_session_data> sd, dumb_ptr<block_list> bl)
 }
 
 /*==========================================
- * MVPエフェクト
- *------------------------------------------
- */
-int clif_mvp_effect(dumb_ptr<map_session_data> sd)
-{
-    nullpo_retz(sd);
-
-    Packet_Fixed<0x010c> fixed_10c;
-    fixed_10c.block_id = sd->bl_id;
-    Buffer buf = create_fpacket<0x010c, 6>(fixed_10c);
-    clif_send(buf, sd, SendWho::AREA);
-    return 0;
-}
-
-/*==========================================
  * エモーション
  *------------------------------------------
  */
@@ -3429,9 +3312,9 @@ RecvResult clif_parse_LoadEndAck(Session *s, dumb_ptr<map_session_data> sd)
     // 119
     // 78
 
-    if (battle_config.player_invincible_time > 0)
+    if (battle_config.player_invincible_time > interval_t::zero())
     {
-        pc_setinvincibletimer(sd, static_cast<interval_t>(battle_config.player_invincible_time));
+        pc_setinvincibletimer(sd, battle_config.player_invincible_time);
     }
 
     map_addblock(sd);     // ブロック登録
@@ -3636,11 +3519,12 @@ RecvResult clif_parse_GetCharNameRequest(Session *s, dumb_ptr<map_session_data> 
             {
                 Option<PartyPair> p_ = party_search(ssd->status.party_id);
 
-                if OPTION_IS_SOME(p, p_)
+                OMATCH_BEGIN_SOME (p, p_)
                 {
                     party_name = p->name;
                     send = 1;
                 }
+                OMATCH_END ();
             }
 
             if (send)
@@ -3654,7 +3538,7 @@ RecvResult clif_parse_GetCharNameRequest(Session *s, dumb_ptr<map_session_data> 
                 send_fpacket<0x0195, 102>(s, fixed_195);
             }
 
-            if (pc_isGM(sd).satisfies(GmLevel::from(static_cast<uint32_t>(battle_config.hack_info_GM_level))))
+            if (pc_isGM(sd).satisfies(battle_config.hack_info_GM_level))
             {
                 IP4Address ip = ssd->get_ip();
                 Packet_Fixed<0x020c> fixed_20c;
@@ -3842,25 +3726,6 @@ RecvResult clif_parse_Emotion(Session *s, dumb_ptr<map_session_data> sd)
  *------------------------------------------
  */
 static
-RecvResult clif_parse_HowManyConnections(Session *s, dumb_ptr<map_session_data>)
-{
-    Packet_Fixed<0x00c1> fixed;
-    RecvResult rv = recv_fpacket<0x00c1, 2>(s, fixed);
-    if (rv != RecvResult::Complete)
-        return rv;
-
-    Packet_Fixed<0x00c2> fixed_c2;
-    fixed_c2.users = map_getusers();
-    send_fpacket<0x00c2, 6>(s, fixed_c2);
-
-    return rv;
-}
-
-/*==========================================
- *
- *------------------------------------------
- */
-static
 RecvResult clif_parse_ActionRequest(Session *s, dumb_ptr<map_session_data> sd)
 {
     Packet_Fixed<0x0089> fixed;
@@ -4035,7 +3900,7 @@ RecvResult clif_parse_Wis(Session *s, dumb_ptr<map_session_data> sd)
         if (dstsd->sess == s)
         {
             ZString mes = "You cannot page yourself."_s;
-            clif_wis_message(s, wisp_server_name, mes);
+            clif_wis_message(s, WISP_SERVER_NAME, mes);
         }
         else
         {
@@ -4188,7 +4053,7 @@ RecvResult clif_parse_EquipItem(Session *s, dumb_ptr<map_session_data> sd)
     if (sd->npc_id)
         return rv;
 
-    if OPTION_IS_SOME(sdidi, sd->inventory_data[index])
+    OMATCH_BEGIN_SOME (sdidi, sd->inventory_data[index])
     {
         EPOS epos = fixed.epos_ignored;
         if (sdidi->type == ItemType::ARROW)
@@ -4197,6 +4062,7 @@ RecvResult clif_parse_EquipItem(Session *s, dumb_ptr<map_session_data> sd)
         // Note: the EPOS argument to pc_equipitem is actually ignored
         pc_equipitem(sd, index, epos);
     }
+    OMATCH_END ();
 
     return rv;
 }
@@ -4755,7 +4621,7 @@ RecvResult clif_parse_RemovePartyMember(Session *s, dumb_ptr<map_session_data> s
  *------------------------------------------
  */
 static
-RecvResult clif_parse_PartyChangeOpt0(Session *s, dumb_ptr<map_session_data> sd)
+RecvResult clif_parse_PartyChangeOption(Session *s, dumb_ptr<map_session_data> sd)
 {
     Packet_Fixed<0x0102> fixed;
     RecvResult rv = recv_fpacket<0x0102, 6>(s, fixed);
@@ -5000,7 +4866,7 @@ func_table clif_parse_func_table[0x0220] =
     {0,     5,  nullptr,                        },  // 0x00be
     {1000,  3,  clif_parse_Emotion,             },  // 0x00bf
     {0,     7,  nullptr,                        },  // 0x00c0
-    {0,     2,  clif_parse_HowManyConnections,  },  // 0x00c1
+    {0,     2,  nullptr,                        },  // 0x00c1
     {0,     6,  nullptr,                        },  // 0x00c2
     {0,     8,  nullptr,                        },  // 0x00c3
     {0,     6,  nullptr,                        },  // 0x00c4
@@ -5065,7 +4931,7 @@ func_table clif_parse_func_table[0x0220] =
     {0,     10, clif_parse_ReplyPartyInvite,    },  // 0x00ff
     {0,     2,  clif_parse_LeaveParty,          },  // 0x0100
     {0,     6,  nullptr,                        },  // 0x0101
-    {0,     6,  clif_parse_PartyChangeOpt0,     },  // 0x0102
+    {0,     6,  clif_parse_PartyChangeOption,   },  // 0x0102
     {0,     30, clif_parse_RemovePartyMember,   },  // 0x0103
     {0,     79, nullptr,                        },  // 0x0104
     {0,     31, nullptr,                        },  // 0x0105
@@ -5420,12 +5286,10 @@ uint16_t clif_check_packet_flood(Session *s, int cmd)
     // They are flooding
     if (tick < sd->flood_rates[cmd] + rate)
     {
-        TimeT now = TimeT::now();
-
         // If it's a nasty flood we log and possibly kick
-        if (now > sd->packet_flood_reset_due)
+        if (tick > sd->packet_flood_reset_due)
         {
-            sd->packet_flood_reset_due = static_cast<time_t>(now) + battle_config.packet_spam_threshold;
+            sd->packet_flood_reset_due = tick + battle_config.packet_spam_threshold;
             sd->packet_flood_in = 0;
         }
 
@@ -5627,7 +5491,6 @@ unknown_packet:
                 PRINTF("\nclif_parse: session #%d, packet 0x%x, lenght %zu\n"_fmt,
                         s, packet_id, packet_avail(s));
             {
-                ZString packet_txt = "save/packet.txt"_s;
                 if (sd && sd->state.auth)
                 {
                     PRINTF("Unknown packet: Account ID %d, character ID %d, player name %s.\n"_fmt,
@@ -5639,35 +5502,27 @@ unknown_packet:
                 else
                     PRINTF("Unknown packet (unknown)\n"_fmt);
 
-                io::AppendFile fp(packet_txt);
-                if (!fp.is_open())
-                {
-                    PRINTF("clif.c: cant write [%s] !!! data is lost !!!\n"_fmt,
-                            packet_txt);
-                    return;
-                }
-                else
                 {
                     timestamp_seconds_buffer now;
                     stamp_time(now);
                     if (sd && sd->state.auth)
                     {
-                        FPRINTF(fp,
+                        FPRINTF(stderr,
                                 "%s\nPlayer with account ID %d (character ID %d, player name %s) sent wrong packet:\n"_fmt,
                                 now,
                                 sd->status_key.account_id,
                                 sd->status_key.char_id, sd->status_key.name);
                     }
                     else if (sd)    // not authentified! (refused by char-server or disconnect before to be authentified)
-                        FPRINTF(fp,
+                        FPRINTF(stderr,
                                 "%s\nUnauthenticated player with account ID %d sent wrong packet:\n"_fmt,
                                 now, sd->bl_id);
                     else
-                        FPRINTF(fp,
+                        FPRINTF(stderr,
                                 "%s\nUnknown connection sent wrong packet:\n"_fmt,
                                 now);
 
-                    packet_dump(fp, s);
+                    packet_dump(s);
                 }
             }
         }
@@ -5676,6 +5531,7 @@ unknown_packet:
 
 void do_init_clif(void)
 {
-    make_listen_port(map_port, SessionParsers{.func_parse= clif_parse, .func_delete= clif_delete});
+    make_listen_port(map_conf.map_port, SessionParsers{.func_parse= clif_parse, .func_delete= clif_delete});
 }
+} // namespace map
 } // namespace tmwa

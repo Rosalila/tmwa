@@ -32,5 +32,9 @@
 
 namespace tmwa
 {
+namespace admin
+{
+    struct AdminConf;
 // meh, add more when I feel like it
+} // namespace admin
 } // namespace tmwa

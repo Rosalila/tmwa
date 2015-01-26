@@ -38,11 +38,8 @@
 
 namespace tmwa
 {
-void clif_setip(IP4Address);
-void clif_setport(int);
-
-IP4Address clif_getip(void);
-int clif_getport(void);
+namespace map
+{
 int clif_countusers(void);
 void clif_setwaitclose(Session *);
 
@@ -52,7 +49,6 @@ int clif_charselectok(BlockId);
 int clif_dropflooritem(dumb_ptr<flooritem_data>);
 int clif_clearflooritem(dumb_ptr<flooritem_data>, Session *);
 int clif_clearchar(dumb_ptr<block_list>, BeingRemoveWhy); // area or fd
-int clif_clearchar_delay(tick_t, dumb_ptr<block_list>, BeingRemoveWhy);
 void clif_clearchar_id(BlockId, BeingRemoveWhy, Session *);
 int clif_spawnpc(dumb_ptr<map_session_data>);  //area
 int clif_spawnnpc(dumb_ptr<npc_data>); // area
@@ -131,8 +127,6 @@ void clif_pcoutsight(dumb_ptr<block_list>, dumb_ptr<map_session_data>);
 void clif_mobinsight(dumb_ptr<block_list>, dumb_ptr<mob_data>);
 void clif_moboutsight(dumb_ptr<block_list>, dumb_ptr<mob_data>);
 
-int clif_skillinfo(dumb_ptr<map_session_data> sd, SkillID skillid, int type,
-        int range);
 void clif_skillinfoblock(dumb_ptr<map_session_data> sd);
 int clif_skillup(dumb_ptr<map_session_data> sd, SkillID skill_num);
 
@@ -151,8 +145,6 @@ void clif_wis_end(Session *s, int flag);
 
 void clif_itemlist(dumb_ptr<map_session_data> sd);
 void clif_equiplist(dumb_ptr<map_session_data> sd);
-
-int clif_mvp_effect(dumb_ptr<map_session_data> sd);
 
 int clif_movetoattack(dumb_ptr<map_session_data> sd, dumb_ptr<block_list> bl);
 
@@ -184,4 +176,5 @@ int clif_GM_kick(dumb_ptr<map_session_data> sd, dumb_ptr<map_session_data> tsd,
 int clif_foreachclient(std::function<void(dumb_ptr<map_session_data>)>);
 
 void do_init_clif(void);
+} // namespace map
 } // namespace tmwa

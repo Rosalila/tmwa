@@ -23,4 +23,7 @@
 
 namespace tmwa
 {
+namespace map
+{
+} // namespace map
 } // namespace tmwa

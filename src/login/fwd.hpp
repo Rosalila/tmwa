@@ -22,6 +22,7 @@
 
 #include "../ints/fwd.hpp" // rank 1
 #include "../strings/fwd.hpp" // rank 1
+#include "../compat/fwd.hpp"
 #include "../generic/fwd.hpp" // rank 3
 #include "../io/fwd.hpp" // rank 4
 #include "../net/fwd.hpp" // rank 5
@@ -34,5 +35,13 @@
 
 namespace tmwa
 {
-// meh, add more when I feel like it
+namespace login
+{
+    struct LoginConf;
+    struct LoginLanConf;
+    struct AuthFifo;
+    struct mmo_char_server;
+    struct AuthData;
+    // meh, add more when I feel like it
+} // namespace login
 } // namespace tmwa

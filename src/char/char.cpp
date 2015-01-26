@@ -52,6 +52,7 @@
 #include "../io/extract.hpp"
 #include "../io/lock.hpp"
 #include "../io/read.hpp"
+#include "../io/span.hpp"
 #include "../io/tty.hpp"
 #include "../io/write.hpp"
 
@@ -77,7 +78,11 @@
 
 #include "../wire/packets.hpp"
 
+#include "char_conf.hpp"
+#include "char_lan_conf.hpp"
+#include "globals.hpp"
 #include "inter.hpp"
+#include "inter_conf.hpp"
 #include "int_party.hpp"
 #include "int_storage.hpp"
 
@@ -86,58 +91,8 @@
 
 namespace tmwa
 {
-static
-Array<struct mmo_map_server, MAX_MAP_SERVERS> server;
-static
-Array<Session *, MAX_MAP_SERVERS> server_session;
-static
-Array<int, MAX_MAP_SERVERS> server_freezeflag;    // Map-server anti-freeze system. Counter. 5 ok, 4...0 freezed
-static
-int anti_freeze_enable = 0;
-static
-std::chrono::seconds anti_freeze_interval = 6_s;
-
-constexpr
-std::chrono::milliseconds DEFAULT_AUTOSAVE_INTERVAL =
-        5_min;
-
-static
-Session *login_session, *char_session;
-static
-AccountName userid;
-static
-AccountPass passwd;
-static
-ServerName server_name;
-static
-CharName wisp_server_name = stringish<CharName>("Server"_s);
-static
-IP4Address login_ip;
-static
-int login_port = 6900;
-static
-IP4Address char_ip;
-static
-int char_port = 6121;
-static
-AString char_txt;
-static
-CharName unknown_char_name = stringish<CharName>("Unknown"_s);
-static
-AString char_log_filename = "log/char.log"_s;
-//Added for lan support
-static
-IP4Address lan_map_ip = IP4_LOCALHOST;
-static
-IP4Mask lan_subnet = IP4Mask(IP4_LOCALHOST, IP4_BROADCAST);
-static
-int char_name_option = 0;      // Option to know which letters/symbols are authorised in the name of a character (0: all, 1: only those in char_name_letters, 2: all EXCEPT those in char_name_letters) by [Yor]
-static
-std::bitset<256> char_name_letters;  // list of letters/symbols authorised (or not) in a character name. by [Yor]
-static constexpr
-GmLevel default_gm_level = GmLevel::from(0_u32);
-
-
+namespace char_
+{
 struct char_session_data : SessionData
 {
     AccountId account_id;
@@ -145,69 +100,16 @@ struct char_session_data : SessionData
     SEX sex;
     unsigned short packet_tmw_version;
     AccountEmail email;
-    TimeT connect_until_time;
 };
+} // namespace char_
 
 void SessionDeleter::operator()(SessionData *sd)
 {
-    really_delete1 static_cast<char_session_data *>(sd);
+    really_delete1 static_cast<char_::char_session_data *>(sd);
 }
 
-struct AuthFifoEntry
+namespace char_
 {
-    AccountId account_id;
-    CharId char_id;
-    int login_id1, login_id2;
-    IP4Address ip;
-    int delflag;
-    SEX sex;
-    unsigned short packet_tmw_version;
-    TimeT connect_until_time;  // # of seconds 1/1/1970 (timestamp): Validity limit of the account (0 = unlimited)
-};
-static
-std::array<AuthFifoEntry, 256> auth_fifo;
-static
-auto auth_fifo_iter = auth_fifo.begin();
-
-static
-int check_ip_flag = 1;         // It's to check IP of a player between char-server and other servers (part of anti-hacking system)
-
-static
-CharId char_id_count = wrap<CharId>(150000);
-static
-std::vector<CharPair> char_keys;
-static
-int max_connect_user = 0;
-static
-std::chrono::milliseconds autosave_time = DEFAULT_AUTOSAVE_INTERVAL;
-
-// Initial position (it's possible to set it in conf file)
-static
-Point start_point = { {"001-1.gat"_s}, 273, 354 };
-
-static
-std::vector<GM_Account> gm_accounts;
-
-// online players by [Yor]
-static
-AString online_txt_filename = "online.txt"_s;
-static
-AString online_html_filename = "online.html"_s;
-static
-int online_sorting_option = 0; // sorting option to display online players in online files
-static
-int online_refresh_html = 20;  // refresh time (in sec) of the html file in the explorer
-static
-GmLevel online_gm_display_min_level = GmLevel::from(20_u32);  // minimum GM level to display 'GM' when we want to display it
-
-static
-std::vector<Session *> online_chars;              // same size of char_keys, and id value of current server (or -1)
-static
-TimeT update_online;           // to update online files when we receiving information from a server (not less than 8 seconds)
-
-static
-pid_t pid = 0;                  // For forked DB writes
-
 
 auto iter_map_sessions() -> decltype(filter_iterator<Session *>(std::declval<Array<Session *, MAX_MAP_SERVERS> *>()))
 {
@@ -253,7 +155,7 @@ void delete_frommap(Session *sess)
 //------------------------------
 void char_log(XString line)
 {
-    io::AppendFile logfp(char_log_filename, true);
+    io::AppendFile logfp(char_conf.char_log_filename, true);
     if (!logfp.is_open())
         return;
     log_with_timestamp(logfp, line);
@@ -330,7 +232,7 @@ AString mmo_char_tostr(struct CharPair *cp)
     // on multi-map server, sometimes it's posssible that last_point become void. (reason???) We check that to not lost character at restart.
     if (!p->last_point.map_)
     {
-        p->last_point = start_point;
+        p->last_point = char_conf.start_point;
     }
 
     MString str_p;
@@ -417,12 +319,6 @@ AString mmo_char_tostr(struct CharPair *cp)
     return AString(str_p);
 }
 
-static
-bool extract(XString str, Point *p)
-{
-    return extract(str, record<','>(&p->map_, &p->x, &p->y));
-}
-
 struct skill_loader
 {
     SkillID id;
@@ -431,7 +327,7 @@ struct skill_loader
 };
 
 static
-bool extract(XString str, struct skill_loader *s)
+bool impl_extract(XString str, struct skill_loader *s)
 {
     uint32_t flags_and_level;
     if (!extract(str,
@@ -441,13 +337,16 @@ bool extract(XString str, struct skill_loader *s)
     s->flags = SkillFlags(flags_and_level >> 16);
     return true;
 }
+} // namespace char
 
 //-------------------------------------------------------------------------
 // Function to set the character from the line (at read of characters file)
 //-------------------------------------------------------------------------
 static
-bool extract(XString str, CharPair *cp)
+bool impl_extract(XString str, CharPair *cp)
 {
+    using namespace tmwa::char_;
+
     CharKey *k = &cp->key;
     CharData *p = cp->data.get();
 
@@ -492,7 +391,7 @@ bool extract(XString str, CharPair *cp)
     else if (!extract(hair_style, &p->hair))
         return false;
 
-    if (wisp_server_name == k->name)
+    if (WISP_SERVER_NAME == k->name)
         return false;
 
     // TODO replace *every* lookup with a map lookup
@@ -535,6 +434,8 @@ bool extract(XString str, CharPair *cp)
     return true;
 }
 
+namespace char_
+{
 //---------------------------------
 // Function to read characters file
 //---------------------------------
@@ -544,11 +445,11 @@ int mmo_char_init(void)
     char_keys.clear();
     online_chars.clear();
 
-    io::ReadFile in(char_txt);
+    io::ReadFile in(char_conf.char_txt);
     if (!in.is_open())
     {
-        PRINTF("Characters file not found: %s.\n"_fmt, char_txt);
-        CHAR_LOG("Characters file not found: %s.\n"_fmt, char_txt);
+        PRINTF("Characters file not found: %s.\n"_fmt, char_conf.char_txt);
+        CHAR_LOG("Characters file not found: %s.\n"_fmt, char_conf.char_txt);
         CHAR_LOG("Id for the next created character: %d.\n"_fmt,
                 char_id_count);
         return 0;
@@ -586,9 +487,9 @@ int mmo_char_init(void)
     }
 
     PRINTF("mmo_char_init: %zu characters read in %s.\n"_fmt,
-            char_keys.size(), char_txt);
+            char_keys.size(), char_conf.char_txt);
     CHAR_LOG("mmo_char_init: %zu characters read in %s.\n"_fmt,
-            char_keys.size(), char_txt);
+            char_keys.size(), char_conf.char_txt);
 
     CHAR_LOG("Id for the next created character: %d.\n"_fmt,
             char_id_count);
@@ -602,7 +503,7 @@ int mmo_char_init(void)
 static
 void mmo_char_sync(void)
 {
-    io::WriteLock fp(char_txt);
+    io::WriteLock fp(char_conf.char_txt);
     if (!fp.is_open())
     {
         PRINTF("WARNING: Server can't not save characters.\n"_fmt);
@@ -690,28 +591,18 @@ CharPair *make_new_char(Session *s, CharName name, const Stats6& stats, uint8_t 
     }
 
     // Check Authorised letters/symbols in the name of the character
-    if (char_name_option == 1)
     {
         // only letters/symbols in char_name_letters are authorised
         for (uint8_t c : name.to__actual())
-            if (!char_name_letters[c])
+        {
+            if (!char_conf.char_name_letters[c])
             {
                 CHAR_LOG("Make new char error (invalid letter in the name): (connection #%d, account: %d), name: %s, invalid letter: %c.\n"_fmt,
                         s, sd->account_id, name, c);
                 return nullptr;
             }
+        }
     }
-    else if (char_name_option == 2)
-    {
-        // letters/symbols in char_name_letters are forbidden
-        for (uint8_t c : name.to__actual())
-            if (char_name_letters[c])
-            {
-                CHAR_LOG("Make new char error (invalid letter in the name): (connection #%d, account: %d), name: %s, invalid letter: %c.\n"_fmt,
-                        s, sd->account_id, name, c);
-                return nullptr;
-            }
-    }                           // else, all letters/symbols are authorised (except control char removed before)
 
     // TODO this comment is obsolete
     // this is why it needs to be unsigned
@@ -766,10 +657,10 @@ CharPair *make_new_char(Session *s, CharName name, const Stats6& stats, uint8_t 
         }
     }
 
-    if (wisp_server_name == name)
+    if (WISP_SERVER_NAME == name)
     {
         CHAR_LOG("Make new char error (name used is wisp name for server): (connection #%d, account: %d) slot %d, name: %s (actual name whisper server: %s), stats: %d+%d+%d+%d+%d+%d=%d, hair: %d, hair color: %d.\n"_fmt,
-                s, sd->account_id, slot, name, wisp_server_name,
+                s, sd->account_id, slot, name, WISP_SERVER_NAME,
                 stats.str, stats.agi, stats.vit, stats.int_, stats.dex, stats.luk,
                 stats.str + stats.agi + stats.vit + stats.int_ + stats.dex + stats.luk,
                 hair_style, hair_color);
@@ -824,8 +715,8 @@ CharPair *make_new_char(Session *s, CharName name, const Stats6& stats, uint8_t 
     cd.head_top = ItemNameId();
     cd.head_mid = ItemNameId();
     cd.head_bottom = ItemNameId();
-    cd.last_point = start_point;
-    cd.save_point = start_point;
+    cd.last_point = char_conf.start_point;
+    cd.save_point = char_conf.start_point;
     char_keys.push_back(std::move(cp));
     online_chars.push_back(nullptr);
 
@@ -839,10 +730,10 @@ static
 void create_online_files(void)
 {
     // write files
-    io::WriteFile fp(online_txt_filename);
+    io::WriteFile fp(char_conf.online_txt_filename);
     if (fp.is_open())
     {
-        io::WriteFile fp2(online_html_filename);
+        io::WriteFile fp2(char_conf.online_html_filename);
         if (fp2.is_open())
         {
             // get time
@@ -850,15 +741,15 @@ void create_online_files(void)
             stamp_time(timetemp);
             // write heading
             FPRINTF(fp2, "<HTML>\n"_fmt);
-            FPRINTF(fp2, "  <META http-equiv=\"Refresh\" content=\"%d\">\n"_fmt, online_refresh_html); // update on client explorer every x seconds
+            FPRINTF(fp2, "  <META http-equiv=\"Refresh\" content=\"%d\">\n"_fmt, char_conf.online_refresh_html); // update on client explorer every x seconds
             FPRINTF(fp2, "  <HEAD>\n"_fmt);
             FPRINTF(fp2, "    <TITLE>Online Players on %s</TITLE>\n"_fmt,
-                    server_name);
+                    char_conf.server_name);
             FPRINTF(fp2, "  </HEAD>\n"_fmt);
             FPRINTF(fp2, "  <BODY>\n"_fmt);
             FPRINTF(fp2, "    <H3>Online Players on %s (%s):</H3>\n"_fmt,
-                    server_name, timetemp);
-            FPRINTF(fp, "Online Players on %s (%s):\n"_fmt, server_name, timetemp);
+                    char_conf.server_name, timetemp);
+            FPRINTF(fp, "Online Players on %s (%s):\n"_fmt, char_conf.server_name, timetemp);
             FPRINTF(fp, "\n"_fmt);
 
             int players = 0;
@@ -894,14 +785,14 @@ void create_online_files(void)
                         // without/with 'GM' display
                         GmLevel gml = isGM(cd.key.account_id);
                         {
-                            if (gml.satisfies(online_gm_display_min_level))
+                            if (gml.satisfies(char_conf.online_gm_display_min_level))
                                 FPRINTF(fp, "%-24s (GM) "_fmt, cd.key.name);
                             else
                                 FPRINTF(fp, "%-24s      "_fmt, cd.key.name);
                         }
                         // name of the character in the html (no < >, because that create problem in html code)
                         FPRINTF(fp2, "        <td>"_fmt);
-                        if (gml.satisfies(online_gm_display_min_level))
+                        if (gml.satisfies(char_conf.online_gm_display_min_level))
                             FPRINTF(fp2, "<b>"_fmt);
                         for (char c : cd.key.name.to__actual())
                         {
@@ -921,7 +812,7 @@ void create_online_files(void)
                                 break;
                             };
                         }
-                        if (gml.satisfies(online_gm_display_min_level))
+                        if (gml.satisfies(char_conf.online_gm_display_min_level))
                             FPRINTF(fp2, "</b> (GM)"_fmt);
                         FPRINTF(fp2, "</td>\n"_fmt);
                     }
@@ -1281,13 +1172,12 @@ void parse_tologin(Session *ls)
                             fixed_6c.code = 0x42;
                             send_fpacket<0x006c, 3>(s2, fixed_6c);
                         }
-                        else if (max_connect_user == 0
-                                 || count_users() < max_connect_user)
+                        else if (char_conf.max_connect_user == 0
+                                 || count_users() < char_conf.max_connect_user)
                         {
                             sd->email = stringish<AccountEmail>(fixed.email);
                             if (!e_mail_check(sd->email))
                                 sd->email = DEFAULT_EMAIL;
-                            sd->connect_until_time = fixed.connect_until;
                             // send characters to player
                             mmo_char_send006b(s2, sd);
                         }
@@ -1326,7 +1216,6 @@ void parse_tologin(Session *ls)
                             sd->email = fixed.email;
                             if (!e_mail_check(sd->email))
                                 sd->email = DEFAULT_EMAIL;
-                            sd->connect_until_time = fixed.connect_until;
                             break;
                         }
                     }
@@ -1481,64 +1370,6 @@ void parse_tologin(Session *ls)
                         send_vpacket<0x2b11, 8, 36>(ss, head_11, repeat_11);
                     }
                 }
-                break;
-            }
-
-            case 0x7924:
-            {                   // [Fate] Itemfrob package: forwarded from login-server
-                Packet_Fixed<0x7924> fixed;
-                rv = recv_fpacket<0x7924, 10>(ls, fixed);
-                if (rv != RecvResult::Complete)
-                    break;
-
-                ItemNameId source_id = fixed.source_item_id;
-                ItemNameId dest_id = fixed.dest_item_id;
-
-                Packet_Fixed<0x2afa> fixed_fa;
-                fixed_fa.source_item_id = source_id;
-                fixed_fa.dest_item_id = dest_id;
-
-                // forward package to map servers
-                for (Session *ss : iter_map_sessions())
-                {
-                    send_fpacket<0x2afa, 10>(ss, fixed_fa);
-                }
-
-                for (CharPair& cp : char_keys)
-                {
-                    CharKey *k = &cp.key;
-                    CharData& cd = *cp.data.get();
-                    CharData *c = &cd;
-                    Borrowed<Storage> s = account2storage(k->account_id);
-                    int changes = 0;
-#define FIX(v) if (v == source_id) {v = dest_id; ++changes; }
-                    for (IOff0 j : IOff0::iter())
-                    {
-                        FIX(c->inventory[j].nameid);
-                    }
-                    // used to FIX cart, but it's no longer supported
-                    // FIX(c->weapon);
-                    FIX(c->shield);
-                    FIX(c->head_top);
-                    FIX(c->head_mid);
-                    FIX(c->head_bottom);
-
-                    {
-                        for (SOff0 j : SOff0::iter())
-                        {
-                            FIX(s->storage_[j].nameid);
-                        }
-                    }
-#undef FIX
-                    if (changes)
-                        CHAR_LOG("itemfrob(%d -> %d):  `%s'(%d, account %d): changed %d times\n"_fmt,
-                                source_id, dest_id, k->name, k->char_id,
-                                k->account_id, changes);
-
-                }
-
-                mmo_char_sync();
-                inter_storage_save();
                 break;
             }
 
@@ -1739,22 +1570,6 @@ void parse_frommap(Session *ms)
     {
         switch (packet_id)
         {
-                // request from map-server to reload GM accounts. Transmission to login-server (by Yor)
-            case 0x2af7:
-            {
-                Packet_Fixed<0x2af7> fixed;
-                rv = recv_fpacket<0x2af7, 2>(ms, fixed);
-                if (rv != RecvResult::Complete)
-                    break;
-
-                if (login_session)
-                {               // don't send request if no login-server
-                    Packet_Fixed<0x2709> fixed_09;
-                    send_fpacket<0x2709, 2>(login_session, fixed_09);
-                }
-                break;
-            }
-
                 // Receiving map names list from the map-server
             case 0x2afa:
             {
@@ -1783,7 +1598,6 @@ void parse_frommap(Session *ms)
 
                 Packet_Fixed<0x2afb> fixed_fb;
                 fixed_fb.unknown = 0;
-                fixed_fb.whisper_name = wisp_server_name;
                 send_fpacket<0x2afb, 27>(ms, fixed_fb);
 
                 {
@@ -1859,7 +1673,7 @@ void parse_frommap(Session *ms)
                         afi.login_id1 == login_id1 &&
                         // here, it's the only area where it's possible that we doesn't know login_id2 (map-server asks just after 0x72 packet, that doesn't given the value)
                         (afi.login_id2 == login_id2 || login_id2 == 0) &&  // relate to the versions higher than 18
-                        (!check_ip_flag || afi.ip == ip)
+                        afi.ip == ip
                         && !afi.delflag)
                     {
                         CharPair *cp = nullptr;
@@ -1880,7 +1694,6 @@ void parse_frommap(Session *ms)
                         Packet_Payload<0x2afd> payload_fd; // not file descriptor
                         payload_fd.account_id = account_id;
                         payload_fd.login_id2 = afi.login_id2;
-                        payload_fd.connect_until = afi.connect_until_time;
                         cd->sex = afi.sex;
                         payload_fd.packet_tmw_version = afi.packet_tmw_version;
                         FPRINTF(stderr,
@@ -1914,7 +1727,7 @@ void parse_frommap(Session *ms)
 
                 server[id].users = head.users;
                 assert (head.users == repeat.size());
-                if (anti_freeze_enable)
+                if (char_conf.anti_freeze_enable)
                     server_freezeflag[id] = 5;  // Map anti-freeze system. Counter. 5 ok, 4...0 freezed
                 // remove all previously online players of the server
                 for (Session *& oci : online_chars)
@@ -1986,7 +1799,6 @@ void parse_frommap(Session *ms)
                 auth_fifo_iter->login_id1 = fixed.login_id1;
                 auth_fifo_iter->login_id2 = fixed.login_id2;
                 auth_fifo_iter->delflag = 2;
-                auth_fifo_iter->connect_until_time = TimeT();    // unlimited/unknown time by default (not display in map-server)
                 auth_fifo_iter->ip = fixed.ip;
                 auth_fifo_iter++;
 
@@ -2025,7 +1837,6 @@ void parse_frommap(Session *ms)
                 auth_fifo_iter->char_id = fixed.char_id;
                 auth_fifo_iter->delflag = 0;
                 auth_fifo_iter->sex = fixed.sex;
-                auth_fifo_iter->connect_until_time = TimeT();    // unlimited/unknown time by default (not display in map-server)
                 auth_fifo_iter->ip = fixed.client_ip;
 
                 // default, if not found in the loop
@@ -2338,7 +2149,7 @@ int search_mapserver(XString map)
 static
 int lan_ip_check(IP4Address addr)
 {
-    bool lancheck = lan_subnet.covers(addr);
+    bool lancheck = char_lan_conf.lan_subnet.covers(addr);
 
     PRINTF("LAN test (result): %s.\n"_fmt,
             (lancheck) ? SGR_BOLD SGR_CYAN "LAN source" SGR_RESET ""_s : SGR_BOLD SGR_GREEN "WAN source" SGR_RESET ""_s);
@@ -2403,7 +2214,7 @@ void handle_x0066(Session *s, struct char_session_data *sd, uint8_t rfifob_2, IP
                     sd->account_id, ck->char_num, ip);
             PRINTF("--Send IP of map-server. "_fmt);
             if (lan_ip_check(ip))
-                fixed_71.ip = lan_map_ip;
+                fixed_71.ip = char_lan_conf.lan_map_ip;
             else
                 fixed_71.ip = server[i].ip;
             fixed_71.port = server[i].port;
@@ -2417,7 +2228,6 @@ void handle_x0066(Session *s, struct char_session_data *sd, uint8_t rfifob_2, IP
             auth_fifo_iter->login_id2 = sd->login_id2;
             auth_fifo_iter->delflag = 0;
             auth_fifo_iter->sex = sd->sex;
-            auth_fifo_iter->connect_until_time = sd->connect_until_time;
             auth_fifo_iter->ip = s->client_ip;
             auth_fifo_iter->packet_tmw_version = sd->packet_tmw_version;
             auth_fifo_iter++;
@@ -2486,7 +2296,6 @@ void parse_char(Session *s)
                         s->session_data = make_unique<char_session_data, SessionDeleter>();
                         sd = static_cast<char_session_data *>(s->session_data.get());
                         sd->email = stringish<AccountEmail>("no mail"_s);  // put here a mail without '@' to refuse deletion if we don't receive the e-mail
-                        sd->connect_until_time = TimeT(); // unknow or illimited (not displaying on map-server)
                     }
                     sd->account_id = account_id;
                     sd->login_id1 = fixed.login_id1;
@@ -2505,13 +2314,12 @@ void parse_char(Session *s)
                         if (afi.account_id == sd->account_id
                             && afi.login_id1 == sd->login_id1
                             && afi.login_id2 == sd->login_id2
-                            && (!check_ip_flag
-                                || afi.ip == s->client_ip)
+                            && afi.ip == s->client_ip
                             && afi.delflag == 2)
                         {
                             afi.delflag = 1;
-                            if (max_connect_user == 0
-                                || count_users() < max_connect_user)
+                            if (char_conf.max_connect_user == 0
+                                || count_users() < char_conf.max_connect_user)
                             {
                                 {
                                     // there is always a login server
@@ -2665,9 +2473,6 @@ void parse_char(Session *s)
                     s->set_eof();
                     return;
                 }
-                AccountEmail email = fixed.email;
-                if (!e_mail_check(email))
-                    email = DEFAULT_EMAIL;
 
                 {
                     {
@@ -2725,8 +2530,8 @@ void parse_char(Session *s)
                 }
                 AccountName userid_ = fixed.account_name;
                 AccountPass passwd_ = fixed.account_pass;
-                if (i == MAX_MAP_SERVERS || userid_ != userid
-                    || passwd_ != passwd)
+                if (i == MAX_MAP_SERVERS || userid_ != char_conf.userid
+                    || passwd_ != char_conf.passwd)
                 {
                     fixed_f9.code = 3;
                     send_fpacket<0x2af9, 3>(s, fixed_f9);
@@ -2736,7 +2541,7 @@ void parse_char(Session *s)
                     fixed_f9.code = 0;
                     s->set_parsers(SessionParsers{.func_parse= parse_frommap, .func_delete= delete_frommap});
                     server_session[i] = s;
-                    if (anti_freeze_enable)
+                    if (char_conf.anti_freeze_enable)
                         server_freezeflag[i] = 5;   // Map anti-freeze system. Counter. 5 ok, 4...0 freezed
                     // ignore fixed.unknown
                     server[i].ip = fixed.ip;
@@ -2824,72 +2629,24 @@ void check_connect_login_server(TimerData *, tick_t)
     if (!login_session)
     {
         PRINTF("Attempt to connect to login-server...\n"_fmt);
-        login_session = make_connection(login_ip, login_port,
+        login_session = make_connection(char_conf.login_ip, char_conf.login_port,
                 SessionParsers{.func_parse= parse_tologin, .func_delete= delete_tologin});
         if (!login_session)
             return;
         realloc_fifo(login_session, FIFOSIZE_SERVERLINK, FIFOSIZE_SERVERLINK);
 
         Packet_Fixed<0x2710> fixed_10;
-        fixed_10.account_name = userid;
-        fixed_10.account_pass = passwd;
+        fixed_10.account_name = char_conf.userid;
+        fixed_10.account_pass = char_conf.passwd;
         fixed_10.unknown = 0;
-        fixed_10.ip = char_ip;
-        fixed_10.port = char_port;
-        fixed_10.server_name = server_name;
+        fixed_10.ip = char_conf.char_ip;
+        fixed_10.port = char_conf.char_port;
+        fixed_10.server_name = char_conf.server_name;
         fixed_10.unknown2 = 0;
         fixed_10.maintenance = 0;
         fixed_10.is_new = 0;
         send_fpacket<0x2710, 86>(login_session, fixed_10);
     }
-}
-
-//-------------------------------------------
-// Reading Lan Support configuration by [Yor]
-//-------------------------------------------
-static
-bool char_lan_config(XString w1, ZString w2)
-{
-    struct hostent *h = nullptr;
-
-    {
-        if (w1 == "lan_map_ip"_s)
-        {
-            // Read map-server Lan IP Address
-            h = gethostbyname(w2.c_str());
-            if (h != nullptr)
-            {
-                lan_map_ip = IP4Address({
-                        static_cast<uint8_t>(h->h_addr[0]),
-                        static_cast<uint8_t>(h->h_addr[1]),
-                        static_cast<uint8_t>(h->h_addr[2]),
-                        static_cast<uint8_t>(h->h_addr[3]),
-                });
-            }
-            else
-            {
-                PRINTF("Bad IP value: %s\n"_fmt, w2);
-                return false;
-            }
-            PRINTF("LAN IP of map-server: %s.\n"_fmt, lan_map_ip);
-        }
-        else if (w1 == "subnet"_s /*backward compatibility*/
-                || w1 == "lan_subnet"_s)
-        {
-            if (!extract(w2, &lan_subnet))
-            {
-                PRINTF("Bad IP mask: %s\n"_fmt, w2);
-                return false;
-            }
-            PRINTF("Sub-network of the map-server: %s.\n"_fmt,
-                    lan_subnet);
-        }
-        else
-        {
-            return false;
-        }
-    }
-    return true;
 }
 
 static
@@ -2898,7 +2655,7 @@ bool lan_check()
     // sub-network check of the map-server
     {
         PRINTF("LAN test of LAN IP of the map-server: "_fmt);
-        if (!lan_ip_check(lan_map_ip))
+        if (!lan_ip_check(char_lan_conf.lan_map_ip))
         {
             PRINTF(SGR_BOLD SGR_RED "***ERROR: LAN IP of the map-server doesn't belong to the specified Sub-network." SGR_RESET "\n"_fmt);
             return false;
@@ -2909,161 +2666,46 @@ bool lan_check()
 }
 
 static
-bool char_config(XString w1, ZString w2)
+bool char_config(io::Spanned<XString> key, io::Spanned<ZString> value)
 {
-    struct hostent *h = nullptr;
-
-    {
-        if (w1 == "userid"_s)
-            userid = stringish<AccountName>(w2);
-        else if (w1 == "passwd"_s)
-            passwd = stringish<AccountPass>(w2);
-        else if (w1 == "server_name"_s)
-        {
-            server_name = stringish<ServerName>(w2);
-            PRINTF("%s server has been intialized\n"_fmt, w2);
-        }
-        else if (w1 == "wisp_server_name"_s)
-        {
-            if (w2.size() >= 4)
-                wisp_server_name = stringish<CharName>(w2);
-        }
-        else if (w1 == "login_ip"_s)
-        {
-            h = gethostbyname(w2.c_str());
-            if (h != nullptr)
-            {
-                login_ip = IP4Address({
-                        static_cast<uint8_t>(h->h_addr[0]),
-                        static_cast<uint8_t>(h->h_addr[1]),
-                        static_cast<uint8_t>(h->h_addr[2]),
-                        static_cast<uint8_t>(h->h_addr[3]),
-                });
-                PRINTF("Login server IP address : %s -> %s\n"_fmt,
-                        w2, login_ip);
-            }
-            else
-            {
-                PRINTF("Bad IP value: %s\n"_fmt, w2);
-                return false;
-            }
-        }
-        else if (w1 == "login_port"_s)
-        {
-            login_port = atoi(w2.c_str());
-        }
-        else if (w1 == "char_ip"_s)
-        {
-            h = gethostbyname(w2.c_str());
-            if (h != nullptr)
-            {
-                char_ip = IP4Address({
-                        static_cast<uint8_t>(h->h_addr[0]),
-                        static_cast<uint8_t>(h->h_addr[1]),
-                        static_cast<uint8_t>(h->h_addr[2]),
-                        static_cast<uint8_t>(h->h_addr[3]),
-                });
-                PRINTF("Character server IP address : %s -> %s\n"_fmt,
-                        w2, char_ip);
-            }
-            else
-            {
-                PRINTF("Bad IP value: %s\n"_fmt, w2);
-                return false;
-            }
-        }
-        else if (w1 == "char_port"_s)
-        {
-            char_port = atoi(w2.c_str());
-        }
-        else if (w1 == "char_txt"_s)
-        {
-            char_txt = w2;
-        }
-        else if (w1 == "max_connect_user"_s)
-        {
-            max_connect_user = atoi(w2.c_str());
-            if (max_connect_user < 0)
-                max_connect_user = 0;   // unlimited online players
-        }
-        else if (w1 == "check_ip_flag"_s)
-        {
-            check_ip_flag = config_switch(w2);
-        }
-        else if (w1 == "autosave_time"_s)
-        {
-            autosave_time = std::chrono::seconds(atoi(w2.c_str()));
-            if (autosave_time <= std::chrono::seconds::zero())
-                autosave_time = DEFAULT_AUTOSAVE_INTERVAL;
-        }
-        else if (w1 == "start_point"_s)
-        {
-            extract(w2, &start_point);
-        }
-        else if (w1 == "unknown_char_name"_s)
-        {
-            unknown_char_name = stringish<CharName>(w2);
-        }
-        else if (w1 == "char_log_filename"_s)
-        {
-            char_log_filename = w2;
-        }
-        else if (w1 == "char_name_option"_s)
-        {
-            char_name_option = atoi(w2.c_str());
-        }
-        else if (w1 == "char_name_letters"_s)
-        {
-            if (!w2)
-                char_name_letters.reset();
-            else
-                for (uint8_t c : w2)
-                    char_name_letters[c] = true;
-        }
-        else if (w1 == "online_txt_filename"_s)
-        {
-            online_txt_filename = w2;
-        }
-        else if (w1 == "online_html_filename"_s)
-        {
-            online_html_filename = w2;
-        }
-        else if (w1 == "online_sorting_option"_s)
-        {
-            online_sorting_option = atoi(w2.c_str());
-        }
-        else if (w1 == "online_gm_display_min_level"_s)
-        {
-            // minimum GM level to display 'GM' when we want to display it
-            return extract(w2, &online_gm_display_min_level);
-        }
-        else if (w1 == "online_refresh_html"_s)
-        {
-            online_refresh_html = atoi(w2.c_str());
-            if (online_refresh_html < 1)
-                online_refresh_html = 1;
-        }
-        else if (w1 == "anti_freeze_enable"_s)
-        {
-            anti_freeze_enable = config_switch(w2);
-        }
-        else if (w1 == "anti_freeze_interval"_s)
-        {
-            anti_freeze_interval = std::max(
-                    std::chrono::seconds(atoi(w2.c_str())),
-                    5_s);
-        }
-        else
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return parse_char_conf(char_conf, key, value);
 }
+
+static
+bool char_lan_config(io::Spanned<XString> key, io::Spanned<ZString> value)
+{
+    return parse_char_lan_conf(char_lan_conf, key, value);
+}
+
+static
+bool inter_config(io::Spanned<XString> key, io::Spanned<ZString> value)
+{
+    return parse_inter_conf(inter_conf, key, value);
+}
+
+static
+bool char_confs(io::Spanned<XString> key, io::Spanned<ZString> value)
+{
+    if (key.data == "char_conf"_s)
+    {
+        return load_config_file(value.data, char_config);
+    }
+    if (key.data == "char_lan_conf"_s)
+    {
+        return load_config_file(value.data, char_lan_config);
+    }
+    if (key.data == "inter_conf"_s)
+    {
+        return load_config_file(value.data, inter_config);
+    }
+    key.span.error("Unknown meta-key for char server"_s);
+    return false;
+}
+} // namespace char_
 
 void term_func(void)
 {
+    using namespace tmwa::char_;
     // write online players files with no player
     std::fill(online_chars.begin(), online_chars.end(), nullptr);
     create_online_files();
@@ -3081,20 +2723,9 @@ void term_func(void)
     CHAR_LOG("----End of char-server (normal end with closing of all files).\n"_fmt);
 }
 
-static
-bool char_confs(XString key, ZString value)
-{
-    unsigned sum = 0;
-    sum += char_config(key, value);
-    sum += char_lan_config(key, value);
-    sum += inter_config(key, value);
-    if (sum >= 2)
-        abort();
-    return sum;
-}
-
 int do_init(Slice<ZString> argv)
 {
+    using namespace tmwa::char_;
     ZString argv0 = argv.pop_front();
 
     bool loaded_config_yet = false;
@@ -3123,12 +2754,12 @@ int do_init(Slice<ZString> argv)
         else
         {
             loaded_config_yet = true;
-            runflag &= load_config_file(argvi, char_confs);
+            runflag &= load_config_file(argvi, char_::char_confs);
         }
     }
 
     if (!loaded_config_yet)
-        runflag &= load_config_file("conf/tmwa-char.conf"_s, char_confs);
+        runflag &= load_config_file("conf/tmwa-char.conf"_s, char_::char_confs);
 
     // a newline in the log...
     CHAR_LOG(""_fmt);
@@ -3142,7 +2773,7 @@ int do_init(Slice<ZString> argv)
     update_online = TimeT::now();
     create_online_files();     // update online players files at start of the server
 
-    char_session = make_listen_port(char_port, SessionParsers{parse_char, delete_char});
+    char_session = make_listen_port(char_conf.char_port, SessionParsers{parse_char, delete_char});
 
     Timer(gettick() + 1_s,
             check_connect_login_server,
@@ -3152,25 +2783,26 @@ int do_init(Slice<ZString> argv)
             send_users_tologin,
             5_s
     ).detach();
-    Timer(gettick() + autosave_time,
+    Timer(gettick() + char_conf.autosave_time,
             mmo_char_sync_timer,
-            autosave_time
+            char_conf.autosave_time
     ).detach();
 
-    if (anti_freeze_enable > 0)
+    if (char_conf.anti_freeze_enable > 0)
     {
         Timer(gettick() + 1_s,
                 map_anti_freeze_system,
-                anti_freeze_interval
+                char_conf.anti_freeze_interval
         ).detach();
     }
 
     CHAR_LOG("The char-server is ready (Server is listening on the port %d).\n"_fmt,
-            char_port);
+            char_conf.char_port);
 
     PRINTF("The char-server is " SGR_BOLD SGR_GREEN "ready" SGR_RESET " (Server is listening on the port %d).\n\n"_fmt,
-            char_port);
+            char_conf.char_port);
 
     return 0;
 }
+// namespace char_ ends before term_func and do_init
 } // namespace tmwa

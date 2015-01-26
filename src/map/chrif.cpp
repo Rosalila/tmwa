@@ -41,10 +41,13 @@
 #include "../wire/packets.hpp"
 
 #include "battle.hpp"
+#include "battle_conf.hpp"
 #include "clif.hpp"
+#include "globals.hpp"
 #include "intif.hpp"
 #include "itemdb.hpp"
 #include "map.hpp"
+#include "map_conf.hpp"
 #include "npc.hpp"
 #include "pc.hpp"
 #include "storage.hpp"
@@ -54,60 +57,8 @@
 
 namespace tmwa
 {
-Session *char_session;
-static
-IP4Address char_ip;
-static
-int char_port = 6121;
-static
-AccountName userid;
-static
-AccountPass passwd;
-static
-int chrif_state;
-
-// 設定ファイル読み込み関係
-/*==========================================
- *
- *------------------------------------------
- */
-void chrif_setuserid(AccountName id)
+namespace map
 {
-    userid = id;
-}
-
-/*==========================================
- *
- *------------------------------------------
- */
-void chrif_setpasswd(AccountPass pwd)
-{
-    passwd = pwd;
-}
-
-AccountPass chrif_getpasswd(void)
-{
-    return passwd;
-}
-
-/*==========================================
- *
- *------------------------------------------
- */
-void chrif_setip(IP4Address ip)
-{
-    char_ip = ip;
-}
-
-/*==========================================
- *
- *------------------------------------------
- */
-void chrif_setport(int port)
-{
-    char_port = port;
-}
-
 /*==========================================
  *
  *------------------------------------------
@@ -152,11 +103,11 @@ static
 int chrif_connect(Session *s)
 {
     Packet_Fixed<0x2af8> fixed_f8;
-    fixed_f8.account_name = userid;
-    fixed_f8.account_pass = passwd;
+    fixed_f8.account_name = map_conf.userid;
+    fixed_f8.account_pass = map_conf.passwd;
     fixed_f8.unused = 0;
-    fixed_f8.ip = clif_getip();
-    fixed_f8.port = clif_getport();
+    fixed_f8.ip = map_conf.map_ip;
+    fixed_f8.port = map_conf.map_port;
     send_fpacket<0x2af8, 60>(s, fixed_f8);
 
     return 0;
@@ -319,8 +270,6 @@ int chrif_sendmapack(Session *, Packet_Fixed<0x2afb> fixed)
                 fixed.unknown);
         exit(1);
     }
-
-    wisp_server_name = fixed.whisper_name;
 
     chrif_state = 2;
 
@@ -751,18 +700,13 @@ int chrif_divorce(CharId char_id, CharId partner_id)
     if (sd && sd->status.partner_id == partner_id)
     {
         sd->status.partner_id = CharId();
-
-        if (sd->npc_flags.divorce)
-        {
-            sd->npc_flags.divorce = 0;
-            map_scriptcont(sd, sd->npc_id);
-        }
     }
 
     sd = map_nick2sd(map_charid2nick(partner_id));
-    nullpo_retz(sd);
-    if (sd->status.partner_id == char_id)
+    if (sd && sd->status.partner_id == char_id)
+    {
         sd->status.partner_id = CharId();
+    }
 
     return 0;
 }
@@ -917,126 +861,6 @@ int chrif_recvgmaccounts(Session *s, const std::vector<Packet_Repeat<0x2b15>>& r
     return 0;
 }
 
-/*==========================================
- * Request to reload GM accounts and their levels: send to char-server by [Yor]
- *------------------------------------------
- */
-int chrif_reloadGMdb(void)
-{
-    if (!char_session)
-        return -1;
-
-    Packet_Fixed<0x2af7> fixed_f7;
-    send_fpacket<0x2af7, 2>(char_session, fixed_f7);
-
-    return 0;
-}
-
-/*========================================
- * Map item IDs
- *----------------------------------------
- */
-
-static
-void ladmin_itemfrob_fix_item(ItemNameId source, ItemNameId dest, Item *item)
-{
-    if (item && item->nameid == source)
-    {
-        item->nameid = dest;
-        item->equip = EPOS::ZERO;
-    }
-}
-
-static
-void ladmin_itemfrob_c2(dumb_ptr<block_list> bl, ItemNameId source_id, ItemNameId dest_id)
-{
-#define IFIX(v) if (v == source_id) {v = dest_id; }
-#define FIX(item) ladmin_itemfrob_fix_item(source_id, dest_id, &item)
-
-    if (!bl)
-        return;
-
-    switch (bl->bl_type)
-    {
-        case BL::PC:
-        {
-            dumb_ptr<map_session_data> pc = bl->is_player();
-
-            for (IOff0 j : IOff0::iter())
-                IFIX(pc->status.inventory[j].nameid);
-            // cart is no longer supported
-            // IFIX(pc->status.weapon);
-            IFIX(pc->status.shield);
-            IFIX(pc->status.head_top);
-            IFIX(pc->status.head_mid);
-            IFIX(pc->status.head_bottom);
-
-            Option<P<Storage>> stor_ = account2storage2(pc->status_key.account_id);
-            if OPTION_IS_SOME(stor, stor_)
-            {
-                for (SOff0 j : SOff0::iter())
-                    FIX(stor->storage_[j]);
-            }
-
-            for (IOff0 j : IOff0::iter())
-            {
-                P<struct item_data> item = TRY_UNWRAP(pc->inventory_data[j], continue);
-                if (item->nameid == source_id)
-                {
-                    item->nameid = dest_id;
-                    if (bool(item->equip))
-                        pc_unequipitem(pc, j, CalcStatus::NOW);
-                    item->nameid = dest_id;
-                }
-            }
-
-            break;
-        }
-
-        case BL::MOB:
-        {
-            dumb_ptr<mob_data> mob = bl->is_mob();
-            for (Item& itm : mob->lootitemv)
-                FIX(itm);
-            break;
-        }
-
-        case BL::ITEM:
-        {
-            dumb_ptr<flooritem_data> item = bl->is_item();
-            FIX(item->item_data);
-            break;
-        }
-    }
-#undef FIX
-#undef IFIX
-}
-
-static
-void ladmin_itemfrob_c(dumb_ptr<block_list> bl, ItemNameId source_id, ItemNameId dest_id)
-{
-    ladmin_itemfrob_c2(bl, source_id, dest_id);
-}
-
-static
-void ladmin_itemfrob(Session *, const Packet_Fixed<0x2afa>& fixed)
-{
-    ItemNameId source_id = fixed.source_item_id;
-    ItemNameId dest_id = fixed.dest_item_id;
-    dumb_ptr<block_list> bl = map_get_first_session();
-
-    // flooritems
-    map_foreachobject(std::bind(ladmin_itemfrob_c, ph::_1, source_id, dest_id),
-            BL::NUL /* any object */);
-
-    // player characters (and, hopefully, mobs)
-    while (bl->bl_next)
-    {
-        ladmin_itemfrob_c2(bl, source_id, dest_id);
-        bl = bl->bl_next;
-    }
-}
-
 static
 void chrif_delete(Session *s)
 {
@@ -1071,16 +895,6 @@ void chrif_parse(Session *s)
                 chrif_connectack(s, fixed);
                 break;
             }
-            case 0x2afa:
-            {
-                Packet_Fixed<0x2afa> fixed;
-                rv = recv_fpacket<0x2afa, 10>(s, fixed);
-                if (rv != RecvResult::Complete)
-                    break;
-
-                ladmin_itemfrob(s, fixed);
-                break;
-            }
             case 0x2afb:
             {
                 Packet_Fixed<0x2afb> fixed;
@@ -1100,12 +914,11 @@ void chrif_parse(Session *s)
 
                 AccountId id = payload.account_id;
                 int login_id2 = payload.login_id2;
-                TimeT connect_until_time = payload.connect_until;
                 short tmw_version = payload.packet_tmw_version;
                 CharKey st_key = payload.char_key;
                 CharData st_data = payload.char_data;
                 pc_authok(id, login_id2,
-                        connect_until_time, tmw_version,
+                        tmw_version,
                         &st_key, &st_data);
                 break;
             }
@@ -1307,7 +1120,7 @@ void check_connect_char_server(TimerData *, tick_t)
     {
         PRINTF("Attempt to connect to char-server...\n"_fmt);
         chrif_state = 0;
-        char_session = make_connection(char_ip, char_port,
+        char_session = make_connection(map_conf.char_ip, map_conf.char_port,
                 SessionParsers{.func_parse= chrif_parse, .func_delete= chrif_delete});
         if (!char_session)
             return;
@@ -1332,4 +1145,5 @@ void do_init_chrif(void)
             5_s
     ).detach();
 }
+} // namespace map
 } // namespace tmwa

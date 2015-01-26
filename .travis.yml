@@ -27,9 +27,17 @@ install:
   -
     if [ -n "$PPA" ];
     then
+        echo sudo add-apt-repository --yes $PPA;
         sudo add-apt-repository --yes $PPA;
     fi
+  -
+    if [ -n "$PPA2" ];
+    then
+        echo sudo add-apt-repository --yes $PPA2;
+        sudo add-apt-repository --yes $PPA2;
+    fi
   - sudo apt-get update -qq
+  - echo sudo apt-get install -qq $PACKAGE $DEBUGPACKAGE
   - sudo apt-get install -qq $PACKAGE $DEBUGPACKAGE
   - sudo apt-get install -qq libgtest-dev valgrind
   - make --version
@@ -42,14 +50,15 @@ before_script:
       wget http://clang.llvm.org/libstdc++4.6-clang11.patch;
       sudo patch /usr/include/c++/4.6/type_traits < libstdc++4.6-clang11.patch;
     fi
-  - sudo sed -i /usr/lib/debug/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.*-gdb.py -e "s:^libdir = .*$:libdir = '/usr/lib/x86_64-linux-gnu':"
+  - if test -f /usr/lib/debug/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.*-gdb.py; then sudo sed -i /usr/lib/debug/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.*-gdb.py -e "s:^libdir = .*$:libdir = '/usr/lib/x86_64-linux-gnu':"; fi
 
 ## Main test script
 script:
   - mkdir build
   - cd build
   - git init
-  - ../configure --build=x86_64-linux-gnu --dev CPPFLAGS=-DQUIET `! [[ $CXX =~ clang* ]] || echo --disable-abi6 --disable-shared` $EXTRA_CONFIGURE_ARGS
+  - echo ../configure --build=x86_64-linux-gnu --dev CPPFLAGS=-DQUIET `! [[ $CXX =~ clang* ]] || echo --disable-abi6` $EXTRA_CONFIGURE_ARGS
+  - ../configure --build=x86_64-linux-gnu --dev CPPFLAGS=-DQUIET `! [[ $CXX =~ clang* ]] || echo --disable-abi6` $EXTRA_CONFIGURE_ARGS
   - make -R -k -j2
   - make -R -k -j2 test TESTER='valgrind --error-exitcode=1 --track-fds=yes'
 
@@ -78,8 +87,6 @@ matrix:
   allow_failures:
     - compiler: clang
       env: REAL_CC=clang-3.3 REAL_CXX=clang++-3.3 PPA=ppa:h-rayflood/llvm         PACKAGE=clang-3.3 DEBUGPACKAGE=libstdc++6-4.6-dbg
-    - compiler: clang
-      env: REAL_CC=clang-3.5 REAL_CXX=clang++-3.5 PPA=ppa:h-rayflood/llvm         PACKAGE=clang-3.5 DEBUGPACKAGE=libstdc++6-4.6-dbg
   exclude:
     - env: ignore=this
   include:
@@ -88,11 +95,13 @@ matrix:
     - compiler: clang
       env: REAL_CC=clang-3.4 REAL_CXX=clang++-3.4 PPA=ppa:h-rayflood/llvm         PACKAGE=clang-3.4 DEBUGPACKAGE=libstdc++6-4.6-dbg
     - compiler: clang
-      env: REAL_CC=clang-3.5 REAL_CXX=clang++-3.5 PPA=ppa:h-rayflood/llvm         PACKAGE=clang-3.5 DEBUGPACKAGE=libstdc++6-4.6-dbg
+      env: REAL_CC=clang-3.5 REAL_CXX=clang++-3.5 PPA=ppa:h-rayflood/llvm-upper PPA2=ppa:h-rayflood/gcc-upper   PACKAGE=clang-3.5 DEBUGPACKAGE=libstdc++6-4.6-dbg
     - compiler: gcc
       env: REAL_CC=gcc-4.7   REAL_CXX=g++-4.7     PPA=ppa:ubuntu-toolchain-r/test PACKAGE=g++-4.7 DEBUGPACKAGE=libstdc++6-4.8-dbg
     - compiler: gcc
       env: REAL_CC=gcc-4.8   REAL_CXX=g++-4.8     PPA=ppa:ubuntu-toolchain-r/test PACKAGE=g++-4.8 DEBUGPACKAGE=libstdc++6-4.8-dbg
+    - compiler: gcc
+      env: REAL_CC=gcc-4.9   REAL_CXX=g++-4.9     PPA=ppa:ubuntu-toolchain-r/test PACKAGE=g++-4.9 DEBUGPACKAGE=libstdc++6-4.9-dbg
 
     - compiler: gcc
       env: REAL_CC=gcc-4.7   REAL_CXX=g++-4.7     PPA=ppa:ubuntu-toolchain-r/test PACKAGE=g++-4.7 DEBUGPACKAGE=libstdc++6-4.8-dbg EXTRA_CONFIGURE_ARGS=--disable-warnings

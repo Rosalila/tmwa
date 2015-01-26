@@ -24,6 +24,7 @@
 
 #include <set>
 
+#include "../generic/array.hpp"
 #include "../generic/db.hpp"
 #include "../generic/intern-pool.hpp"
 
@@ -33,6 +34,9 @@
 
 #include "../mmo/cxxstdio_enums.hpp"
 
+#include "../ast/script.hpp"
+
+#include "globals.hpp"
 #include "map.t.hpp"
 #include "script-buffer.hpp"
 #include "script-call.hpp"
@@ -43,6 +47,8 @@
 
 namespace tmwa
 {
+namespace map
+{
 constexpr bool DEBUG_DISP = false;
 
 class ScriptBuffer
@@ -50,7 +56,11 @@ class ScriptBuffer
     typedef ZString::iterator ZSit;
 
     std::vector<ByteCode> script_buf;
+    RString debug_name;
+    std::vector<std::pair<ScriptLabel, size_t>> debug_labels;
 public:
+    ScriptBuffer(RString name) : debug_name(std::move(name)) {}
+
     // construction methods
     void add_scriptc(ByteCode a);
     void add_scriptb(uint8_t a);
@@ -70,14 +80,17 @@ public:
         return ZString(strings::really_construct_from_a_pointer, reinterpret_cast<const char *>(&script_buf[i]), nullptr);
     }
 };
+} // namespace map
 } // namespace tmwa
 
-void std::default_delete<const tmwa::ScriptBuffer>::operator()(const tmwa::ScriptBuffer *sd)
+void std::default_delete<const tmwa::map::ScriptBuffer>::operator()(const tmwa::map::ScriptBuffer *sd)
 {
     really_delete1 sd;
 }
 
 namespace tmwa
+{
+namespace map
 {
 // implemented for script-call.hpp because reasons
 ByteCode ScriptPointer::peek() const { return (*TRY_UNWRAP(code, abort()))[pos]; }
@@ -89,15 +102,6 @@ ZString ScriptPointer::pops()
     ++pos;
     return rv;
 }
-
-Map<RString, str_data_t> str_datam;
-static
-str_data_t LABEL_NEXTLINE_;
-
-Map<ScriptLabel, int> scriptlabel_db;
-static
-std::set<ScriptLabel> probable_labels;
-UPMap<RString, const ScriptBuffer> userfunc_db;
 
 static
 struct ScriptConfigParse
@@ -112,12 +116,6 @@ struct ScriptConfigParse
     int warn_cmd_mismatch_paramnum = 1;
 } script_config;
 
-static
-int parse_cmd_if = 0;
-static
-Option<Borrowed<str_data_t>> parse_cmdp = None;
-
-InternPool variable_names;
 
 Option<Borrowed<str_data_t>> search_strp(XString p)
 {
@@ -127,8 +125,11 @@ Option<Borrowed<str_data_t>> search_strp(XString p)
 Borrowed<str_data_t> add_strp(XString p)
 {
     Option<P<str_data_t>> rv_ = search_strp(p);
-    if OPTION_IS_SOME(rv, rv_)
+    OMATCH_BEGIN_SOME (rv, rv_)
+    {
         return rv;
+    }
+    OMATCH_END ();
 
     RString p2 = p;
     P<str_data_t> datum = str_datam.init(p2);
@@ -297,14 +298,6 @@ ZString::iterator skip_word(ZString::iterator p)
     return p;
 }
 
-// TODO: replace this whole mess with some sort of input stream that works
-// a line at a time.
-static
-ZString startptr;
-static
-int startline;
-
-int script_errors = 0;
 /*==========================================
  * エラーメッセージ出力
  *------------------------------------------
@@ -499,7 +492,7 @@ ZString::iterator ScriptBuffer::parse_subexpr(ZString::iterator p, int limit)
         {
             int i = 0;
             P<str_data_t> funcp = TRY_UNWRAP(parse_cmdp, abort());
-            ZString::iterator plist[128];
+            Array<ZString::iterator, 128> plist;
 
             if (funcp->type != StringCode::FUNC)
             {
@@ -522,6 +515,11 @@ ZString::iterator ScriptBuffer::parse_subexpr(ZString::iterator p, int limit)
                 }
                 p = skip_space(p);
                 i++;
+            }
+            if (i == 128)
+            {
+                disp_error_message("PANIC: unrecoverable error in function argument list"_s, p);
+                abort();
             }
             plist[i] = p;
             if (*p != ')')
@@ -589,7 +587,7 @@ ZString::iterator ScriptBuffer::parse_expr(ZString::iterator p)
 ZString::iterator ScriptBuffer::parse_line(ZString::iterator p, bool *can_step)
 {
     int i = 0;
-    ZString::iterator plist[128];
+    Array<ZString::iterator, 128> plist;
 
     p = skip_space(p);
     if (*p == ';')
@@ -646,6 +644,11 @@ ZString::iterator ScriptBuffer::parse_line(ZString::iterator p, bool *can_step)
         p = skip_space(p);
         i++;
     }
+    if (i == 128)
+    {
+        disp_error_message("PANIC: unknown error in command argument list"_s, p);
+        abort();
+    }
     plist[i] = p;
     if (*(p++) != ';')
     {
@@ -692,10 +695,10 @@ void add_builtin_functions(void)
     }
 }
 
-std::unique_ptr<const ScriptBuffer> parse_script(ZString src, int line, bool implicit_end)
+std::unique_ptr<const ScriptBuffer> compile_script(RString debug_name, const ast::script::ScriptBody& body, bool implicit_end)
 {
-    auto script_buf = make_unique<ScriptBuffer>();
-    script_buf->parse_script(src, line, implicit_end);
+    auto script_buf = make_unique<ScriptBuffer>(std::move(debug_name));
+    script_buf->parse_script(body.braced_body, body.span.begin.line, implicit_end);
     return std::move(script_buf);
 }
 
@@ -767,6 +770,7 @@ void ScriptBuffer::parse_script(ZString src, int line, bool implicit_end)
             }
             set_label(ld, script_buf.size());
             scriptlabel_db.insert(stringish<ScriptLabel>(str), script_buf.size());
+            debug_labels.push_back(std::make_pair(stringish<ScriptLabel>(str), script_buf.size()));
             p = tmpp + 1;
             continue;
         }
@@ -843,4 +847,5 @@ void ScriptBuffer::parse_script(ZString src, int line, bool implicit_end)
     }
     PRINTF("\n"_fmt);
 }
+} // namespace map
 } // namespace tmwa

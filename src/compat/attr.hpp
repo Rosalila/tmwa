@@ -1,7 +1,7 @@
 #pragma once
 //    attr.hpp - Attributes.
 //
-//    Copyright © 2013 Ben Longbons <b.r.longbons@gmail.com>
+//    Copyright © 2013-2014 Ben Longbons <b.r.longbons@gmail.com>
 //
 //    This file is part of The Mana World (Athena server)
 //
@@ -30,8 +30,4 @@ namespace tmwa
 #endif
 
 #define JOIN(a, b) a##b
-
-#define WITH_VAR(ty, var, expr)                                 \
-    for (bool JOIN(var, _guard) = true; JOIN(var, _guard); )    \
-        for (ty var = expr; JOIN(var, _guard); JOIN(var, _guard) = false)
 } // namespace tmwa

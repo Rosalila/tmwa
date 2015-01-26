@@ -29,6 +29,8 @@
 #include "../mmo/cxxstdio_enums.hpp"
 
 #include "battle.hpp"
+#include "battle_conf.hpp"
+#include "globals.hpp"
 #include "map.hpp"
 #include "npc.hpp"
 #include "pc.hpp"
@@ -41,6 +43,8 @@
 
 
 namespace tmwa
+{
+namespace map
 {
 constexpr bool DEBUG_RUN = false;
 
@@ -74,9 +78,9 @@ dumb_ptr<map_session_data> script_rid2sd(ScriptState *st)
  */
 void get_val(dumb_ptr<map_session_data> sd, struct script_data *data)
 {
-    MATCH (*data)
+    MATCH_BEGIN (*data)
     {
-        CASE (const ScriptDataParam&, u)
+        MATCH_CASE (const ScriptDataParam&, u)
         {
             if (sd == nullptr)
                 PRINTF("get_val error param SP::%d\n"_fmt, u.reg.sp());
@@ -85,7 +89,7 @@ void get_val(dumb_ptr<map_session_data> sd, struct script_data *data)
                 numi = pc_readparam(sd, u.reg.sp());
             *data = ScriptDataInt{numi};
         }
-        CASE (const ScriptDataVariable&, u)
+        MATCH_CASE (const ScriptDataVariable&, u)
         {
             ZString name_ = variable_names.outtern(u.reg.base());
             VarName name = stringish<VarName>(name_);
@@ -108,8 +112,11 @@ void get_val(dumb_ptr<map_session_data> sd, struct script_data *data)
                 else if (prefix == '$')
                 {
                     Option<P<RString>> s_ = mapregstr_db.search(u.reg);
-                    if OPTION_IS_SOME(s, s_)
+                    OMATCH_BEGIN_SOME (s, s_)
+                    {
                         str = *s;
+                    }
+                    OMATCH_END ();
                 }
                 else
                 {
@@ -152,6 +159,7 @@ void get_val(dumb_ptr<map_session_data> sd, struct script_data *data)
             }
         }
     }
+    MATCH_END ();
 }
 
 void get_val(ScriptState *st, struct script_data *data)
@@ -268,24 +276,27 @@ int conv_num(ScriptState *st, struct script_data *data)
     int rv = 0;
     get_val(st, data);
     assert (!data->is<ScriptDataRetInfo>());
-    MATCH (*data)
+    MATCH_BEGIN (*data)
     {
-        default:
+        MATCH_DEFAULT ()
+        {
             abort();
-        CASE (const ScriptDataStr&, u)
+        }
+        MATCH_CASE (const ScriptDataStr&, u)
         {
             RString p = u.str;
             rv = atoi(p.c_str());
         }
-        CASE (const ScriptDataInt&, u)
+        MATCH_CASE (const ScriptDataInt&, u)
         {
             return u.numi;
         }
-        CASE (const ScriptDataPos&, u)
+        MATCH_CASE (const ScriptDataPos&, u)
         {
             return u.numi;
         }
     }
+    MATCH_END ()
     *data = ScriptDataInt{rv};
     return rv;
 }
@@ -596,45 +607,46 @@ void run_func(ScriptState *st)
         PRINTF("stack dump :"_fmt);
         for (script_data& d : st->stack->stack_datav)
         {
-            MATCH (d)
+            MATCH_BEGIN (d)
             {
-                CASE (const ScriptDataInt&, u)
+                MATCH_CASE (const ScriptDataInt&, u)
                 {
                     PRINTF(" int(%d)"_fmt, u.numi);
                 }
-                CASE (const ScriptDataRetInfo&, u)
+                MATCH_CASE (const ScriptDataRetInfo&, u)
                 {
                     PRINTF(" retinfo(%p)"_fmt, static_cast<const void *>(&*u.script));
                 }
-                CASE (const ScriptDataParam&, u)
+                MATCH_CASE (const ScriptDataParam&, u)
                 {
                     PRINTF(" param(%d)"_fmt, u.reg.sp());
                 }
-                CASE (const ScriptDataVariable&, u)
+                MATCH_CASE (const ScriptDataVariable&, u)
                 {
                     PRINTF(" name(%s)[%d]"_fmt, variable_names.outtern(u.reg.base()), u.reg.index());
                 }
-                CASE (const ScriptDataArg&, u)
+                MATCH_CASE (const ScriptDataArg&, u)
                 {
                     (void)u;
                     PRINTF(" arg"_fmt);
                 }
-                CASE (const ScriptDataPos&, u)
+                MATCH_CASE (const ScriptDataPos&, u)
                 {
                     (void)u;
                     PRINTF(" pos(%d)"_fmt, u.numi);
                 }
-                CASE (const ScriptDataStr&, u)
+                MATCH_CASE (const ScriptDataStr&, u)
                 {
                     (void)u;
                     PRINTF(" str(%s)"_fmt, u.str);
                 }
-                CASE (const ScriptDataFuncRef&, u)
+                MATCH_CASE (const ScriptDataFuncRef&, u)
                 {
                     (void)u;
                     PRINTF(" func(%s)"_fmt, builtin_functions[u.numi].name);
                 }
             }
+            MATCH_END ();
         }
         PRINTF("\n"_fmt);
     }
@@ -666,136 +678,6 @@ void run_func(ScriptState *st)
         pop_stack(st->stack, olddefsp - 4 - i, olddefsp);  // 要らなくなったスタック(引数と復帰用データ)削除
 
         st->state = ScriptEndState::GOTO;
-    }
-}
-
-// pretend it's external so this can be called in the debugger
-void dump_script(Borrowed<const ScriptBuffer> script);
-void dump_script(Borrowed<const ScriptBuffer> script)
-{
-    ScriptPointer scriptp(script, 0);
-    while (scriptp.pos < reinterpret_cast<const std::vector<ByteCode> *>(&*script)->size())
-    {
-        PRINTF("%6zu: "_fmt, scriptp.pos);
-        switch (ByteCode c = get_com(&scriptp))
-        {
-            case ByteCode::EOL:
-                PRINTF("EOL\n"_fmt); // extra newline between functions
-                break;
-            case ByteCode::INT:
-                // synthesized!
-                PRINTF("INT %d"_fmt, get_num(&scriptp));
-                break;
-
-            case ByteCode::POS:
-            case ByteCode::VARIABLE:
-            case ByteCode::FUNC_REF:
-            case ByteCode::PARAM:
-            {
-                int arg = 0;
-                arg |= static_cast<uint8_t>(scriptp.pop()) << 0;
-                arg |= static_cast<uint8_t>(scriptp.pop()) << 8;
-                arg |= static_cast<uint8_t>(scriptp.pop()) << 16;
-                switch(c)
-                {
-                case ByteCode::POS:
-                    PRINTF("POS %d"_fmt, arg);
-                    break;
-                case ByteCode::VARIABLE:
-                    PRINTF("VARIABLE %s"_fmt, variable_names.outtern(arg));
-                    break;
-                case ByteCode::FUNC_REF:
-                    PRINTF("FUNC_REF %s"_fmt, builtin_functions[arg].name);
-                    break;
-                case ByteCode::PARAM:
-                    PRINTF("PARAM SP::#%d (sorry)"_fmt, arg);
-                    break;
-                }
-            }
-                break;
-            case ByteCode::ARG:
-                PRINTF("ARG"_fmt);
-                break;
-            case ByteCode::STR:
-                PRINTF("STR \"%s\""_fmt, scriptp.pops());
-                break;
-            case ByteCode::FUNC:
-                PRINTF("FUNC"_fmt);
-                break;
-
-            case ByteCode::ADD:
-                PRINTF("ADD"_fmt);
-                break;
-            case ByteCode::SUB:
-                PRINTF("SUB"_fmt);
-                break;
-            case ByteCode::MUL:
-                PRINTF("MUL"_fmt);
-                break;
-            case ByteCode::DIV:
-                PRINTF("DIV"_fmt);
-                break;
-            case ByteCode::MOD:
-                PRINTF("MOD"_fmt);
-                break;
-            case ByteCode::EQ:
-                PRINTF("EQ"_fmt);
-                break;
-            case ByteCode::NE:
-                PRINTF("NE"_fmt);
-                break;
-            case ByteCode::GT:
-                PRINTF("GT"_fmt);
-                break;
-            case ByteCode::GE:
-                PRINTF("GE"_fmt);
-                break;
-            case ByteCode::LT:
-                PRINTF("LT"_fmt);
-                break;
-            case ByteCode::LE:
-                PRINTF("LE"_fmt);
-                break;
-            case ByteCode::AND:
-                PRINTF("AND"_fmt);
-                break;
-            case ByteCode::OR:
-                PRINTF("OR"_fmt);
-                break;
-            case ByteCode::XOR:
-                PRINTF("XOR"_fmt);
-                break;
-            case ByteCode::LAND:
-                PRINTF("LAND"_fmt);
-                break;
-            case ByteCode::LOR:
-                PRINTF("LOR"_fmt);
-                break;
-            case ByteCode::R_SHIFT:
-                PRINTF("R_SHIFT"_fmt);
-                break;
-            case ByteCode::L_SHIFT:
-                PRINTF("L_SHIFT"_fmt);
-                break;
-            case ByteCode::NEG:
-                PRINTF("NEG"_fmt);
-                break;
-            case ByteCode::NOT:
-                PRINTF("NOT"_fmt);
-                break;
-            case ByteCode::LNOT:
-                PRINTF("LNOT"_fmt);
-                break;
-
-            case ByteCode::NOP:
-                PRINTF("NOP"_fmt);
-                break;
-
-            default:
-                PRINTF("??? %d"_fmt, c);
-                break;
-        }
-        PRINTF("\n"_fmt);
     }
 }
 
@@ -1040,4 +922,5 @@ ZString get_script_var_s(dumb_ptr<map_session_data> sd, VarName var, int e)
     PRINTF("Warning: you lied about the type and I can't fix it!"_fmt);
     return ZString();
 }
+} // namespace map
 } // namespace tmwa

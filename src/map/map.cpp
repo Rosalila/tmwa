@@ -47,6 +47,7 @@
 #include "../io/cxxstdio.hpp"
 #include "../io/extract.hpp"
 #include "../io/read.hpp"
+#include "../io/span.hpp"
 #include "../io/tty.hpp"
 #include "../io/write.hpp"
 
@@ -62,13 +63,16 @@
 
 #include "atcommand.hpp"
 #include "battle.hpp"
+#include "battle_conf.hpp"
 #include "chrif.hpp"
 #include "clif.hpp"
+#include "globals.hpp"
 #include "grfio.hpp"
 #include "itemdb.hpp"
 #include "magic-interpreter.hpp" // for is_spell inline body
 #include "magic-stmt.hpp"
 #include "magic-v2.hpp"
+#include "map_conf.hpp"
 #include "mob.hpp"
 #include "npc.hpp"
 #include "npc-parse.hpp"
@@ -84,50 +88,16 @@
 
 namespace tmwa
 {
-DMap<BlockId, dumb_ptr<block_list>> id_db;
-
-UPMap<MapName, map_abstract> maps_db;
-
-static
-DMap<CharName, dumb_ptr<map_session_data>> nick_db;
-
-struct charid2nick
-{
-    CharName nick;
-    int req_id;
-};
-
-static
-Map<CharId, struct charid2nick> charid_db;
-
-static
-int users = 0;
-static
-Array<dumb_ptr<block_list>, unwrap<BlockId>(MAX_FLOORITEM)> object;
-static
-BlockId first_free_object_id = BlockId();
-
-interval_t autosave_time = DEFAULT_AUTOSAVE_INTERVAL;
-int save_settings = 0xFFFF;
-
-AString motd_txt = "conf/motd.txt"_s;
-
-CharName wisp_server_name = stringish<CharName>("Server"_s);   // can be modified in char-server configuration file
-
-map_local undefined_gat = [](){ map_local rv {}; rv.name_ = stringish<MapName>("undefined.gat"_s); return rv; }();
-
-static
-void map_delmap(MapName mapname);
-
 void SessionDeleter::operator()(SessionData *sd)
 {
-    really_delete1 static_cast<map_session_data *>(sd);
+    really_delete1 static_cast<map::map_session_data *>(sd);
 }
 
-VString<49> convert_for_printf(NpcEvent ev)
+namespace map
 {
-    return STRNPRINTF(50, "%s::%s"_fmt, ev.npc, ev.label);
-}
+const CharName WISP_SERVER_NAME = stringish<CharName>("Server"_s);
+
+map_local undefined_gat = [](){ map_local rv {}; rv.name_ = stringish<MapName>("undefined.gat"_s); return rv; }();
 
 /*==========================================
  * 全map鯖総計での接続数設定
@@ -136,7 +106,7 @@ VString<49> convert_for_printf(NpcEvent ev)
  */
 void map_setusers(int n)
 {
-    users = n;
+    world_user_count = n;
 }
 
 /*==========================================
@@ -145,13 +115,8 @@ void map_setusers(int n)
  */
 int map_getusers(void)
 {
-    return users;
+    return world_user_count;
 }
-
-static
-int block_free_lock = 0;
-static
-std::vector<dumb_ptr<block_list>> block_free;
 
 void MapBlockLock::freeblock(dumb_ptr<block_list> bl)
 {
@@ -176,12 +141,6 @@ MapBlockLock::~MapBlockLock()
         block_free.clear();
     }
 }
-
-/// This is a dummy entry that is shared by all the linked lists,
-/// so that any entry can unlink itself without worrying about
-/// whether it was the the head of the list.
-static
-struct block_list bl_head;
 
 /*==========================================
  * map[]のblock_listに追加
@@ -778,14 +737,14 @@ BlockId map_addflooritem(Item *item_data, int amount,
     interval_t owner_protection[3];
 
     {
-        owner_protection[0] = static_cast<interval_t>(battle_config.item_first_get_time);
-        owner_protection[1] = owner_protection[0] + static_cast<interval_t>(battle_config.item_second_get_time);
-        owner_protection[2] = owner_protection[1] + static_cast<interval_t>(battle_config.item_third_get_time);
+        owner_protection[0] = battle_config.item_first_get_time;
+        owner_protection[1] = owner_protection[0] + battle_config.item_second_get_time;
+        owner_protection[2] = owner_protection[1] + battle_config.item_third_get_time;
     }
 
     return map_addflooritem_any(item_data, amount, m, x, y,
             owners, owner_protection,
-            static_cast<interval_t>(battle_config.flooritem_lifetime), 1);
+            battle_config.flooritem_lifetime, 1);
 }
 
 /*==========================================
@@ -1247,36 +1206,40 @@ void map_setcell(Borrowed<map_local> m, int x, int y, MapCell t)
 int map_setipport(MapName name, IP4Address ip, int port)
 {
     Option<P<map_abstract>> md_ = maps_db.get(name);
-    if OPTION_IS_SOME(md, md_)
+    OMATCH_BEGIN (md_)
     {
-        if (md->gat)
+        OMATCH_CASE_SOME (md)
         {
-            // local -> check data
-            if (ip != clif_getip() || port != clif_getport())
+            if (md->gat)
             {
-                PRINTF("from char server : %s -> %s:%d\n"_fmt,
-                        name, ip, port);
-                return 1;
+                // local -> check data
+                if (ip != map_conf.map_ip || port != map_conf.map_port)
+                {
+                    PRINTF("from char server : %s -> %s:%d\n"_fmt,
+                            name, ip, port);
+                    return 1;
+                }
+            }
+            else
+            {
+                // update
+                P<map_remote> mdos = md.downcast_to<map_remote>();
+                mdos->ip = ip;
+                mdos->port = port;
             }
         }
-        else
+        OMATCH_CASE_NONE ()
         {
-            // update
-            P<map_remote> mdos = md.downcast_to<map_remote>();
+            // not exist -> add new data
+            auto mdos = make_unique<map_remote>();
+            mdos->name_ = name;
+            mdos->gat = nullptr;
             mdos->ip = ip;
             mdos->port = port;
+            maps_db.put(mdos->name_, std::move(mdos));
         }
     }
-    else
-    {
-        // not exist -> add new data
-        auto mdos = make_unique<map_remote>();
-        mdos->name_ = name;
-        mdos->gat = nullptr;
-        mdos->ip = ip;
-        mdos->port = port;
-        maps_db.put(mdos->name_, std::move(mdos));
-    }
+    OMATCH_END ();
     return 0;
 }
 
@@ -1295,7 +1258,7 @@ bool map_readmap(map_local *m, size_t num, MapName fn)
 
     int xs = m->xs = gat_v[0] | gat_v[1] << 8;
     int ys = m->ys = gat_v[2] | gat_v[3] << 8;
-    PRINTF("\rLoading Maps [%zu/%zu]: %-30s  (%i, %i)"_fmt,
+    PRINTF("Loading Maps [%zu/%zu]: %-30s  (%i, %i)\r"_fmt,
             num, maps_db.size(),
             fn, xs, ys);
     fflush(stdout);
@@ -1348,7 +1311,7 @@ bool map_readallmap(void)
         }
     }
 
-    PRINTF("\rMaps Loaded: %-65zu\n"_fmt, maps_db.size());
+    PRINTF("Maps Loaded: %-65zu\n"_fmt, maps_db.size());
     if (maps_removed)
     {
         PRINTF("Cowardly refusing to keep going after removing %d maps.\n"_fmt,
@@ -1363,7 +1326,6 @@ bool map_readallmap(void)
  * 読み込むmapを追加する
  *------------------------------------------
  */
-static
 void map_addmap(MapName mapname)
 {
     if (mapname == "clear"_s)
@@ -1398,18 +1360,11 @@ void map_delmap(MapName mapname)
 constexpr int LOGFILE_SECONDS_PER_CHUNK_SHIFT = 10;
 
 static
-std::unique_ptr<io::AppendFile> map_logfile;
-static
-AString map_logfile_name;
-static
-long map_logfile_index;
-
-static
 void map_close_logfile(void)
 {
     if (map_logfile)
     {
-        AString filename = STRPRINTF("%s.%ld"_fmt, map_logfile_name, map_logfile_index);
+        AString filename = STRPRINTF("%s.%ld"_fmt, map_conf.log_file, map_logfile_index);
         const char *args[] =
         {
             "gzip",
@@ -1437,22 +1392,23 @@ void map_start_logfile(long index)
 
     AString filename_buf = STRPRINTF(
             "%s.%ld"_fmt,
-            map_logfile_name,
+            map_conf.log_file,
             map_logfile_index);
     map_logfile = make_unique<io::AppendFile>(filename_buf);
     if (!map_logfile->is_open())
     {
         map_logfile.reset();
-        perror(map_logfile_name.c_str());
+        perror(map_conf.log_file.c_str());
     }
 }
 
 static
-void map_set_logfile(AString filename)
+void map_set_logfile()
 {
-    struct timeval tv;
+    if (!map_conf.log_file)
+        return;
 
-    map_logfile_name = std::move(filename);
+    struct timeval tv;
     gettimeofday(&tv, nullptr);
 
     map_start_logfile(tv.tv_sec >> LOGFILE_SECONDS_PER_CHUNK_SHIFT);
@@ -1475,147 +1431,6 @@ void map_log(XString line)
     }
 
     log_with_timestamp(*map_logfile, line);
-}
-
-/*==========================================
- * 設定ファイルを読み込む
- *------------------------------------------
- */
-static
-bool map_config_read(ZString cfgName)
-{
-    struct hostent *h = nullptr;
-
-    io::ReadFile in(cfgName);
-    if (!in.is_open())
-    {
-        PRINTF("Map configuration file not found at: %s\n"_fmt, cfgName);
-        return false;
-    }
-
-    bool rv = true;
-    AString line;
-    while (in.getline(line))
-    {
-        if (is_comment(line))
-            continue;
-        XString w1;
-        ZString w2;
-        if (!config_split(line, &w1, &w2))
-        {
-            PRINTF("Bad config line: %s\n"_fmt, line);
-            rv = false;
-            continue;
-        }
-        if (w1 == "userid"_s)
-        {
-            AccountName name = stringish<AccountName>(w2);
-            chrif_setuserid(name);
-        }
-        else if (w1 == "passwd"_s)
-        {
-            AccountPass pass = stringish<AccountPass>(w2);
-            chrif_setpasswd(pass);
-        }
-        else if (w1 == "char_ip"_s)
-        {
-            h = gethostbyname(w2.c_str());
-            IP4Address w2ip;
-            if (h != nullptr)
-            {
-                w2ip = IP4Address({
-                        static_cast<uint8_t>(h->h_addr[0]),
-                        static_cast<uint8_t>(h->h_addr[1]),
-                        static_cast<uint8_t>(h->h_addr[2]),
-                        static_cast<uint8_t>(h->h_addr[3]),
-                });
-                PRINTF("Character server IP address : %s -> %s\n"_fmt,
-                        w2, w2ip);
-            }
-            else
-            {
-                PRINTF("Bad IP value: %s\n"_fmt, line);
-                return false;
-            }
-            chrif_setip(w2ip);
-        }
-        else if (w1 == "char_port"_s)
-        {
-            chrif_setport(atoi(w2.c_str()));
-        }
-        else if (w1 == "map_ip"_s)
-        {
-            h = gethostbyname(w2.c_str());
-            IP4Address w2ip;
-            if (h != nullptr)
-            {
-                w2ip = IP4Address({
-                        static_cast<uint8_t>(h->h_addr[0]),
-                        static_cast<uint8_t>(h->h_addr[1]),
-                        static_cast<uint8_t>(h->h_addr[2]),
-                        static_cast<uint8_t>(h->h_addr[3]),
-                });
-                PRINTF("Map server IP address : %s -> %s\n"_fmt,
-                        w2, w2ip);
-            }
-            else
-            {
-                PRINTF("Bad IP value: %s\n"_fmt, line);
-                return false;
-            }
-            clif_setip(w2ip);
-        }
-        else if (w1 == "map_port"_s)
-        {
-            clif_setport(atoi(w2.c_str()));
-        }
-        else if (w1 == "map"_s)
-        {
-            MapName name = VString<15>(w2);
-            map_addmap(name);
-        }
-        else if (w1 == "delmap"_s)
-        {
-            MapName name = VString<15>(w2);
-            map_delmap(name);
-        }
-        else if (w1 == "npc"_s)
-        {
-            npc_addsrcfile(w2);
-        }
-        else if (w1 == "delnpc"_s)
-        {
-            npc_delsrcfile(w2);
-        }
-        else if (w1 == "autosave_time"_s)
-        {
-            autosave_time = std::chrono::seconds(atoi(w2.c_str()));
-            if (autosave_time <= interval_t::zero())
-                autosave_time = DEFAULT_AUTOSAVE_INTERVAL;
-        }
-        else if (w1 == "motd_txt"_s)
-        {
-            motd_txt = w2;
-        }
-        else if (w1 == "mapreg_txt"_s)
-        {
-            mapreg_txt = w2;
-        }
-        else if (w1 == "gm_log"_s)
-        {
-            gm_log = std::move(w2);
-        }
-        else if (w1 == "log_file"_s)
-        {
-            map_set_logfile(w2);
-        }
-        else if (w1 == "import"_s)
-        {
-            rv &= map_config_read(w2);
-        }
-    }
-
-    return rv;
 }
 
 static
@@ -1643,12 +1458,79 @@ void cleanup_sub(dumb_ptr<block_list> bl)
     }
 }
 
+int compare_item(Item *a, Item *b)
+{
+    return (a->nameid == b->nameid);
+}
+
+static
+bool map_config(io::Spanned<XString> key, io::Spanned<ZString> value)
+{
+    return parse_map_conf(map_conf, key, value);
+}
+
+static
+bool battle_config_(io::Spanned<XString> key, io::Spanned<ZString> value)
+{
+    return parse_battle_conf(battle_config, key, value);
+}
+
+static
+bool map_confs(io::Spanned<XString> key, io::Spanned<ZString> value)
+{
+    if (key.data == "map_conf"_s)
+        return load_config_file(value.data, map_config);
+    if (key.data == "battle_conf"_s)
+        return load_config_file(value.data, battle_config_);
+    if (key.data == "atcommand_conf"_s)
+        return atcommand_config_read(value.data);
+
+    if (key.data == "item_db"_s)
+        return itemdb_readdb(value.data);
+    if (key.data == "mob_db"_s)
+        return mob_readdb(value.data);
+    if (key.data == "mob_skill_db"_s)
+        return mob_readskilldb(value.data);
+    if (key.data == "skill_db"_s)
+        return skill_readdb(value.data);
+    if (key.data == "magic_conf"_s)
+        return magic::load_magic_file_v2(value.data);
+
+    if (key.data == "resnametable"_s)
+        return load_resnametable(value.data);
+    if (key.data == "const_db"_s)
+        return read_constdb(value.data);
+    key.span.error("Unknown meta-key for map server"_s);
+    return false;
+}
+
+int map_scriptcont(dumb_ptr<map_session_data> sd, BlockId id)
+{
+    dumb_ptr<block_list> bl = map_id2bl(id);
+
+    if (!bl)
+        return 0;
+
+    switch (bl->bl_type)
+    {
+        case BL::NPC:
+            return npc_scriptcont(sd, id);
+        case BL::SPELL:
+            magic::spell_execute_script(bl->is_spell());
+            break;
+    }
+
+    return 0;
+}
+} // namespace map
+
 /*==========================================
  * map鯖終了時処理
  *------------------------------------------
  */
 void term_func(void)
 {
+    using namespace tmwa::map;
     for (auto& mit : maps_db)
     {
         if (!mit.second->gat)
@@ -1676,46 +1558,14 @@ void term_func(void)
     map_close_logfile();
 }
 
-int compare_item(Item *a, Item *b)
-{
-    return (a->nameid == b->nameid);
-}
-
-static
-bool map_confs(XString key, ZString value)
-{
-    if (key == "map_conf"_s)
-        return map_config_read(value);
-    if (key == "battle_conf"_s)
-        return battle_config_read(value);
-    if (key == "atcommand_conf"_s)
-        return atcommand_config_read(value);
-
-    if (key == "item_db"_s)
-        return itemdb_readdb(value);
-    if (key == "mob_db"_s)
-        return mob_readdb(value);
-    if (key == "mob_skill_db"_s)
-        return mob_readskilldb(value);
-    if (key == "skill_db"_s)
-        return skill_readdb(value);
-    if (key == "magic_conf"_s)
-        return magic::load_magic_file_v2(value);
-
-    if (key == "resnametable"_s)
-        return load_resnametable(value);
-    if (key == "const_db"_s)
-        return read_constdb(value);
-    PRINTF("unknown map conf key: %s\n"_fmt, AString(key));
-    return false;
-}
-
 /*======================================================
  * Map-Server Init and Command-line Arguments [Valaris]
  *------------------------------------------------------
  */
 int do_init(Slice<ZString> argv)
 {
+    using namespace tmwa::map;
+
     ZString argv0 = argv.pop_front();
     runflag &= magic::magic_init0();
 
@@ -1763,7 +1613,8 @@ int do_init(Slice<ZString> argv)
     if (!loaded_config_yet)
         runflag &= load_config_file("conf/tmwa-map.conf"_s, map_confs);
 
-    battle_config_check();
+    map_set_logfile();
+
     runflag &= map_readallmap();
 
     do_init_chrif();
@@ -1781,26 +1632,7 @@ int do_init(Slice<ZString> argv)
         PRINTF("The server is running in " SGR_BOLD SGR_RED "PK Mode" SGR_RESET "\n"_fmt);
 
     PRINTF("The map-server is " SGR_BOLD SGR_GREEN "ready" SGR_RESET " (Server is listening on the port %d).\n\n"_fmt,
-            clif_getport());
-
-    return 0;
-}
-
-int map_scriptcont(dumb_ptr<map_session_data> sd, BlockId id)
-{
-    dumb_ptr<block_list> bl = map_id2bl(id);
-
-    if (!bl)
-        return 0;
-
-    switch (bl->bl_type)
-    {
-        case BL::NPC:
-            return npc_scriptcont(sd, id);
-        case BL::SPELL:
-            magic::spell_execute_script(bl->is_spell());
-            break;
-    }
+            map_conf.map_port);
 
     return 0;
 }
